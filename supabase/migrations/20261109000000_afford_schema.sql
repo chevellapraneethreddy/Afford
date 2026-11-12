@@ -1,5 +1,6 @@
 -- ====================================================================
 -- AFFORD SOCIAL APP: COMPLETE PRODUCTION DATABASE SCHEMA WITH RLS
+-- Run this complete script in your Supabase project SQL Editor.
 -- ====================================================================
 
 -- 1. EXTENSIONS
@@ -40,7 +41,6 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for searching profiles
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
 CREATE INDEX IF NOT EXISTS idx_profiles_display_name ON public.profiles(display_name);
 
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS public.reports (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   reporter_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   reported_user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
-  content_type TEXT NOT NULL, -- 'user', 'post', 'comment', 'message', 'story'
+  content_type TEXT NOT NULL,
   content_id UUID,
   reason TEXT NOT NULL,
   status report_status DEFAULT 'pending',
@@ -165,8 +165,9 @@ CREATE TABLE IF NOT EXISTS public.miss_you_events (
 CREATE INDEX IF NOT EXISTS idx_miss_you_recipient ON public.miss_you_events(recipient_id);
 CREATE INDEX IF NOT EXISTS idx_miss_you_pair ON public.miss_you_events(sender_id, recipient_id, created_at DESC);
 
--- View/Table for Miss You aggregation per friendship pair
-CREATE OR REPLACE VIEW public.miss_you_counts AS
+-- View with security_invoker = on so Row Level Security is strictly respected
+CREATE OR REPLACE VIEW public.miss_you_counts
+WITH (security_invoker = on) AS
 SELECT 
   sender_id,
   recipient_id,
@@ -202,7 +203,7 @@ CREATE TABLE IF NOT EXISTS public.posts (
   caption TEXT,
   filter_name TEXT,
   is_close_friends_only BOOLEAN DEFAULT false,
-  is_short_video BOOLEAN DEFAULT false, -- For vertical reels feed
+  is_short_video BOOLEAN DEFAULT false,
   likes_count INT DEFAULT 0,
   comments_count INT DEFAULT 0,
   shares_count INT DEFAULT 0,
@@ -261,7 +262,7 @@ CREATE TABLE IF NOT EXISTS public.notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   actor_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
-  type TEXT NOT NULL, -- 'miss_you', 'like', 'comment', 'follow', 'streak_warning', 'message'
+  type TEXT NOT NULL,
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   data JSONB DEFAULT '{}'::jsonb,
@@ -291,6 +292,38 @@ CREATE TABLE IF NOT EXISTS public.prompt_responses (
   CONSTRAINT unique_daily_response UNIQUE (prompt_id, user_id)
 );
 
+-- 16. AUTO-CREATE PROFILE ON AUTH SIGNUP
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, username, display_name, avatar_url)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.raw_user_meta_data->>'username', 'user_' || SUBSTRING(NEW.id::text, 1, 8)),
+    COALESCE(NEW.raw_user_meta_data->>'display_name', 'Afford Member'),
+    COALESCE(NEW.raw_user_meta_data->>'avatar_url', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400')
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- 17. HELPER FUNCTION TO BREAK RLS RECURSION ON CONVERSATIONS & MEMBERS
+CREATE OR REPLACE FUNCTION public.is_member_of_conversation(conv_id UUID, check_user_id UUID)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.conversation_members
+    WHERE conversation_id = conv_id AND user_id = check_user_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
 -- ====================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ====================================================================
@@ -317,68 +350,75 @@ ALTER TABLE public.daily_prompts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.prompt_responses ENABLE ROW LEVEL SECURITY;
 
 -- PROFILES POLICIES
+DROP POLICY IF EXISTS "Public profiles are visible to all authenticated users" ON public.profiles;
 CREATE POLICY "Public profiles are visible to all authenticated users"
   ON public.profiles FOR SELECT
   USING (auth.role() = 'authenticated');
 
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 CREATE POLICY "Users can insert their own profile"
   ON public.profiles FOR INSERT
   WITH CHECK (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 CREATE POLICY "Users can update their own profile"
   ON public.profiles FOR UPDATE
   USING (auth.uid() = id);
 
 -- CONVERSATIONS & MEMBERS
+DROP POLICY IF EXISTS "Members can view conversations" ON public.conversations;
 CREATE POLICY "Members can view conversations"
   ON public.conversations FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.conversation_members
-      WHERE conversation_id = conversations.id
-      AND user_id = auth.uid()
-    )
-  );
+  USING (public.is_member_of_conversation(id, auth.uid()));
 
+DROP POLICY IF EXISTS "Authenticated users can create conversations" ON public.conversations;
+CREATE POLICY "Authenticated users can create conversations"
+  ON public.conversations FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "Members can view members in their conversations" ON public.conversation_members;
 CREATE POLICY "Members can view members in their conversations"
   ON public.conversation_members FOR SELECT
   USING (
-    conversation_id IN (
-      SELECT conversation_id FROM public.conversation_members
-      WHERE user_id = auth.uid()
-    )
+    user_id = auth.uid() OR
+    public.is_member_of_conversation(conversation_id, auth.uid())
+  );
+
+DROP POLICY IF EXISTS "Users can insert membership" ON public.conversation_members;
+CREATE POLICY "Users can insert membership"
+  ON public.conversation_members FOR INSERT
+  WITH CHECK (
+    auth.uid() = user_id OR
+    public.is_member_of_conversation(conversation_id, auth.uid())
   );
 
 -- MESSAGES
+DROP POLICY IF EXISTS "Members can read messages in their conversations" ON public.messages;
 CREATE POLICY "Members can read messages in their conversations"
   ON public.messages FOR SELECT
-  USING (
-    conversation_id IN (
-      SELECT conversation_id FROM public.conversation_members
-      WHERE user_id = auth.uid()
-    )
-  );
+  USING (public.is_member_of_conversation(conversation_id, auth.uid()));
 
+DROP POLICY IF EXISTS "Members can insert messages in their conversations" ON public.messages;
 CREATE POLICY "Members can insert messages in their conversations"
   ON public.messages FOR INSERT
   WITH CHECK (
     auth.uid() = sender_id AND
-    conversation_id IN (
-      SELECT conversation_id FROM public.conversation_members
-      WHERE user_id = auth.uid()
-    )
+    public.is_member_of_conversation(conversation_id, auth.uid())
   );
 
 -- MISS YOU EVENTS
+DROP POLICY IF EXISTS "Users can view Miss You events sent or received by them" ON public.miss_you_events;
 CREATE POLICY "Users can view Miss You events sent or received by them"
   ON public.miss_you_events FOR SELECT
   USING (auth.uid() = sender_id OR auth.uid() = recipient_id);
 
+DROP POLICY IF EXISTS "Users can insert Miss You events where they are sender" ON public.miss_you_events;
 CREATE POLICY "Users can insert Miss You events where they are sender"
   ON public.miss_you_events FOR INSERT
   WITH CHECK (auth.uid() = sender_id);
 
 -- POSTS POLICIES
+DROP POLICY IF EXISTS "Users can view non-close-friends posts and their own" ON public.posts;
 CREATE POLICY "Users can view non-close-friends posts and their own"
   ON public.posts FOR SELECT
   USING (
@@ -396,19 +436,23 @@ CREATE POLICY "Users can view non-close-friends posts and their own"
     ))
   );
 
+DROP POLICY IF EXISTS "Users can insert their own posts" ON public.posts;
 CREATE POLICY "Users can insert their own posts"
   ON public.posts FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own posts" ON public.posts;
 CREATE POLICY "Users can update their own posts"
   ON public.posts FOR UPDATE
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete their own posts" ON public.posts;
 CREATE POLICY "Users can delete their own posts"
   ON public.posts FOR DELETE
   USING (auth.uid() = user_id);
 
 -- STORIES POLICIES
+DROP POLICY IF EXISTS "Users can view unexpired stories if authorized" ON public.stories;
 CREATE POLICY "Users can view unexpired stories if authorized"
   ON public.stories FOR SELECT
   USING (
@@ -422,22 +466,39 @@ CREATE POLICY "Users can view unexpired stories if authorized"
     )
   );
 
+DROP POLICY IF EXISTS "Users can insert their own stories" ON public.stories;
 CREATE POLICY "Users can insert their own stories"
   ON public.stories FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
 -- NOTIFICATIONS POLICIES
+DROP POLICY IF EXISTS "Users can read only their own notifications" ON public.notifications;
 CREATE POLICY "Users can read only their own notifications"
   ON public.notifications FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own notifications read status" ON public.notifications;
 CREATE POLICY "Users can update their own notifications read status"
   ON public.notifications FOR UPDATE
   USING (auth.uid() = user_id);
 
--- ====================================================================
+-- STORAGE BUCKETS
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('afford-media', 'afford-media', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- STORAGE POLICIES
+DROP POLICY IF EXISTS "Public can view afford-media" ON storage.objects;
+CREATE POLICY "Public can view afford-media"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'afford-media');
+
+DROP POLICY IF EXISTS "Authenticated users can upload afford-media" ON storage.objects;
+CREATE POLICY "Authenticated users can upload afford-media"
+  ON storage.objects FOR INSERT
+  WITH CHECK (bucket_id = 'afford-media' AND auth.role() = 'authenticated');
+
 -- REALTIME PUBLICATION SETUP
--- ====================================================================
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
   ALTER PUBLICATION supabase_realtime ADD TABLE public.miss_you_events;
