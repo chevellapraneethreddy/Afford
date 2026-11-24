@@ -1,6 +1,9 @@
 import React from 'react';
 import {
+  ActionSheetIOS,
+  Alert,
   Image,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -8,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { Plus, Sparkles } from 'lucide-react-native';
 import { BrandColors } from '@/constants/Colors';
@@ -17,13 +21,118 @@ import { Story } from '@/types';
 
 export const StoryCarousel: React.FC = () => {
   const { colors, isDark } = useTheme();
-  const { stories, user } = useAuth();
+  const { stories, user, createStory } = useAuth();
 
-  const handleCreateStory = () => {
-    router.push({
-      pathname: '/(tabs)/create',
-      params: { mode: 'story' },
-    });
+  // Find if current user has an active story
+  const myStory = stories.find(
+    (s) => s.userId === user?.id || s.user?.id === user?.id || (user?.username && s.user?.username === user?.username)
+  );
+
+  const hasValidUserAvatar = !!(user?.avatarUrl && !user.avatarUrl.includes('534528741775'));
+
+  const handlePickFromGallery = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        router.push({
+          pathname: '/(tabs)/create',
+          params: { mode: 'story' },
+        });
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        allowsEditing: false,
+        quality: 0.5,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        const isVideo = asset.type === 'video' || (asset.uri && (asset.uri.endsWith('.mp4') || asset.uri.endsWith('.mov')));
+        const mediaUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        await createStory(mediaUri, '', false, isVideo ? 'video' : 'image');
+        Alert.alert('Story Live! ✨', 'Your 24-hour story is now live for everyone to see.');
+      }
+    } catch (e) {
+      console.warn('Story pick error:', e);
+      router.push({
+        pathname: '/(tabs)/create',
+        params: { mode: 'story' },
+      });
+    }
+  };
+
+  const handleCaptureCamera = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        router.push({
+          pathname: '/(tabs)/create',
+          params: { mode: 'story' },
+        });
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        quality: 0.5,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        const isVideo = asset.type === 'video' || (asset.uri && (asset.uri.endsWith('.mp4') || asset.uri.endsWith('.mov')));
+        const mediaUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        await createStory(mediaUri, '', false, isVideo ? 'video' : 'image');
+        Alert.alert('Story Live! ✨', 'Your 24-hour story has been captured and shared.');
+      }
+    } catch (e) {
+      console.warn('Camera error:', e);
+      router.push({
+        pathname: '/(tabs)/create',
+        params: { mode: 'story' },
+      });
+    }
+  };
+
+  const handleAddStoryOptions = () => {
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Choose from Gallery', 'Take Photo with Camera', 'Open Story Editor'],
+          cancelButtonIndex: 0,
+        },
+        (btnIdx) => {
+          if (btnIdx === 1) handlePickFromGallery();
+          else if (btnIdx === 2) handleCaptureCamera();
+          else if (btnIdx === 3) {
+            router.push({ pathname: '/(tabs)/create', params: { mode: 'story' } });
+          }
+        }
+      );
+    } else {
+      Alert.alert(
+        'Add to Your Story',
+        'Share a disappearing moment with your circle.',
+        [
+          { text: 'Gallery', onPress: handlePickFromGallery },
+          { text: 'Camera', onPress: handleCaptureCamera },
+          {
+            text: 'Editor',
+            onPress: () => router.push({ pathname: '/(tabs)/create', params: { mode: 'story' } }),
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+    }
+  };
+
+  const handleUserStoryPress = () => {
+    if (myStory) {
+      handleOpenStory(myStory);
+    } else {
+      handleAddStoryOptions();
+    }
   };
 
   const handleOpenStory = (story: Story) => {
@@ -40,43 +149,65 @@ export const StoryCarousel: React.FC = () => {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Current User Add Story Ring */}
+        {/* Current User Story Ring */}
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={handleCreateStory}
+          onPress={handleUserStoryPress}
           style={styles.storyItem}
+          accessibilityRole="button"
+          accessibilityLabel={myStory ? 'View your story' : 'Add to your story'}
         >
           <View style={styles.avatarWrapper}>
             <LinearGradient
-              colors={BrandColors.coralGradient}
+              colors={myStory ? BrandColors.storyGradient : BrandColors.coralGradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.addRingGradient}
             >
               <View style={[styles.innerBorder, { backgroundColor: colors.background }]}>
-                <Image
-                  source={{ uri: user?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400' }}
-                  style={styles.avatarImage}
-                />
+                {hasValidUserAvatar ? (
+                  <Image
+                    source={{ uri: user!.avatarUrl }}
+                    style={styles.avatarImage}
+                  />
+                ) : (
+                  <View style={[styles.avatarInitialContainer, { backgroundColor: colors.inputBackground }]}>
+                    <Text style={[styles.avatarInitialText, { color: colors.tint }]}>
+                      {(user?.displayName || user?.username || 'Y').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
               </View>
             </LinearGradient>
-            <LinearGradient
-              colors={BrandColors.coralGradient}
+
+            {/* Plus badge to add another story directly from gallery */}
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={handlePickFromGallery}
               style={[styles.addBadge, { borderColor: colors.background }]}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityLabel="Add new story"
             >
-              <Plus size={11} color="#FFFFFF" strokeWidth={3} />
-            </LinearGradient>
+              <LinearGradient
+                colors={BrandColors.coralGradient}
+                style={styles.addBadgeGradient}
+              >
+                <Plus size={12} color="#FFFFFF" strokeWidth={3} />
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
           <Text
             style={[styles.storyUsername, { color: colors.textSecondary }]}
             numberOfLines={1}
           >
-            Your Story
+            {myStory ? 'Your Story' : 'Add Story'}
           </Text>
         </TouchableOpacity>
 
         {/* Friends Stories */}
-        {stories.map((story) => {
+        {stories
+          .filter((s) => s.userId !== user?.id && s.user?.id !== user?.id && (!user?.username || s.user?.username !== user?.username))
+          .map((story) => {
           const isCloseFriend = story.isCloseFriendsOnly;
           const isViewed = story.isViewedByMe;
 
@@ -90,10 +221,18 @@ export const StoryCarousel: React.FC = () => {
               <View style={styles.avatarWrapper}>
                 {isViewed ? (
                   <View style={[styles.viewedRing, { borderColor: colors.border }]}>
-                    <Image
-                      source={{ uri: story.user.avatarUrl }}
-                      style={styles.avatarImage}
-                    />
+                    {story.user.avatarUrl && !story.user.avatarUrl.includes('534528741775') ? (
+                      <Image
+                        source={{ uri: story.user.avatarUrl }}
+                        style={styles.avatarImage}
+                      />
+                    ) : (
+                      <View style={[styles.avatarInitialContainer, { backgroundColor: colors.inputBackground }]}>
+                        <Text style={[styles.avatarInitialText, { color: colors.tint }]}>
+                          {(story.user.displayName || 'F').charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 ) : (
                   <LinearGradient
@@ -103,10 +242,18 @@ export const StoryCarousel: React.FC = () => {
                     style={styles.storyRingGradient}
                   >
                     <View style={[styles.innerBorder, { backgroundColor: colors.background }]}>
-                      <Image
-                        source={{ uri: story.user.avatarUrl }}
-                        style={styles.avatarImage}
-                      />
+                      {story.user.avatarUrl && !story.user.avatarUrl.includes('534528741775') ? (
+                        <Image
+                          source={{ uri: story.user.avatarUrl }}
+                          style={styles.avatarImage}
+                        />
+                      ) : (
+                        <View style={[styles.avatarInitialContainer, { backgroundColor: colors.inputBackground }]}>
+                          <Text style={[styles.avatarInitialText, { color: colors.tint }]}>
+                            {(story.user.displayName || 'F').charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   </LinearGradient>
                 )}
@@ -200,14 +347,26 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 30,
   },
+  avatarInitialContainer: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitialText: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
   addBadge: {
     position: 'absolute',
     bottom: -1,
     right: -1,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     borderWidth: 2,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -215,6 +374,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 3,
+  },
+  addBadgeGradient: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   closeFriendBadge: {
     position: 'absolute',

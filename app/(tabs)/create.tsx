@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Image,
@@ -39,7 +39,7 @@ const FILTERS = [
   { name: 'Vivid Nature', desc: 'Elevated vibrance & sky', overlay: 'rgba(16, 185, 129, 0.1)' },
 ];
 
-const MOOD_CHIPS = ['✨ Grateful', '🌅 Nostalgic', '❤️ Warm Bond', '🌟 Inspired', '☕ Peaceful'];
+const MOOD_CHIPS = ['Grateful', '🌅 Nostalgic', '❤️ Warm Bond', '🌟 Inspired', '☕ Peaceful'];
 
 export default function CreateScreen() {
   const { colors, isDark } = useTheme();
@@ -48,14 +48,20 @@ export default function CreateScreen() {
 
   // Form State
   const [targetType, setTargetType] = useState<'post' | 'story'>(params.mode === 'story' ? 'story' : 'post');
-  const [selectedMedia, setSelectedMedia] = useState<string | null>(
-    'https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&auto=format&fit=crop&q=80'
-  );
+  const [selectedMedia, setSelectedMedia] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
   const [selectedFilter, setSelectedFilter] = useState<string>('Original');
   const [caption, setCaption] = useState<string>('');
   const [isCloseFriendsOnly, setIsCloseFriendsOnly] = useState<boolean>(false);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (params.mode === 'story') {
+      setTargetType('story');
+    } else if (params.mode === 'post') {
+      setTargetType('post');
+    }
+  }, [params.mode]);
 
   // Pick Image/Video from Library
   const pickMediaFromLibrary = async () => {
@@ -68,14 +74,17 @@ export default function CreateScreen() {
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
-        allowsEditing: true,
-        aspect: [4, 5],
-        quality: 0.9,
+        allowsEditing: false,
+        quality: 0.5,
+        base64: true,
       });
 
       if (!result.canceled && result.assets[0]) {
-        setSelectedMedia(result.assets[0].uri);
-        setMediaType(result.assets[0].type === 'video' ? 'video' : 'image');
+        const asset = result.assets[0];
+        const isVideo = asset.type === 'video' || (asset.uri && (asset.uri.endsWith('.mp4') || asset.uri.endsWith('.mov')));
+        const mediaUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        setSelectedMedia(mediaUri);
+        setMediaType(isVideo ? 'video' : 'image');
       }
     } catch (e) {
       console.warn('Media pick error:', e);
@@ -92,14 +101,17 @@ export default function CreateScreen() {
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [4, 5],
-        quality: 0.9,
+        allowsEditing: false,
+        quality: 0.5,
+        base64: true,
       });
 
       if (!result.canceled && result.assets[0]) {
-        setSelectedMedia(result.assets[0].uri);
-        setMediaType('image');
+        const asset = result.assets[0];
+        const isVideo = asset.type === 'video' || (asset.uri && (asset.uri.endsWith('.mp4') || asset.uri.endsWith('.mov')));
+        const mediaUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        setSelectedMedia(mediaUri);
+        setMediaType(isVideo ? 'video' : 'image');
       }
     } catch (e) {
       console.warn('Camera capture error:', e);
@@ -120,15 +132,16 @@ export default function CreateScreen() {
 
     try {
       if (targetType === 'story') {
-        createStory(selectedMedia, caption, isCloseFriendsOnly);
-        Alert.alert('Story Published! ✨', 'Your 24-hour moment is now live.');
+        await createStory(selectedMedia, caption, isCloseFriendsOnly, mediaType);
+        Alert.alert('Story Live! ✨', 'Your 24-hour story is now live for everyone to see.');
       } else {
-        createPost(selectedMedia, caption, isCloseFriendsOnly, selectedFilter, mediaType);
-        Alert.alert('Published! 🎉', 'Your memory has been shared with your circle.');
+        await createPost(selectedMedia, caption, isCloseFriendsOnly, selectedFilter, mediaType);
+        Alert.alert('Published! 🎉', 'Your memory has been shared with everyone on AFFORD.');
       }
 
       // Reset & redirect to home
       setCaption('');
+      setSelectedMedia(null);
       router.push('/(tabs)');
     } catch (e) {
       Alert.alert('Error', 'Failed to publish. Please try again.');
@@ -191,8 +204,27 @@ export default function CreateScreen() {
           <View style={[styles.mediaPreviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             {selectedMedia ? (
               <View style={styles.imageWrapper}>
-                <Image source={{ uri: selectedMedia }} style={styles.previewImage} />
-                {currentFilterObj && (
+                {mediaType === 'video' ? (
+                  Platform.OS === 'web' ? (
+                    // @ts-ignore
+                    <video
+                      src={selectedMedia}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 16 }}
+                      controls
+                      autoPlay
+                      muted
+                      loop
+                    />
+                  ) : (
+                    <View style={[styles.previewImage, { backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' }]}>
+                      <Film size={48} color={BrandColors.primaryCoral} />
+                      <Text style={{ color: '#FFFFFF', fontWeight: '700', marginTop: 8 }}>Video Ready</Text>
+                    </View>
+                  )
+                ) : (
+                  <Image source={{ uri: selectedMedia }} style={styles.previewImage} />
+                )}
+                {currentFilterObj && mediaType !== 'video' && (
                   <View
                     style={[
                       StyleSheet.absoluteFill,
@@ -386,7 +418,7 @@ export default function CreateScreen() {
                 {isPublishing
                   ? 'Sharing Moment...'
                   : targetType === 'story'
-                  ? 'Share to 24h Moments ✨'
+                  ? 'Share to 24h Moments'
                   : 'Publish Memory to Feed 🚀'}
               </Text>
             </LinearGradient>

@@ -11,7 +11,8 @@ export default function Root({ children }: { children: ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+        <title>AFFORD — Feel Closer, Even When Apart</title>
 
         {/*
           Disable body scrolling on web. This makes ScrollView components work closer to how they do on native.
@@ -29,11 +30,29 @@ export default function Root({ children }: { children: ReactNode }) {
 }
 
 const responsiveBackground = `
-body {
-  background-color: #fff;
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  background-color: #FAFAFA;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
 }
 @media (prefers-color-scheme: dark) {
-  body {
-    background-color: #000;
+  html, body {
+    background-color: #0A0C14;
+  }
+}
+@media (max-width: 640px) {
+  html, body {
+    background-color: #FFFFFF;
   }
 }`;

@@ -42,7 +42,7 @@ export default function RegisterScreen() {
     setIsLoading(false);
 
     if (res.success) {
-      Alert.alert('Welcome to AFFORD! ✨', 'Your account has been created.', [
+      Alert.alert('Welcome to AFFORD!', 'Your account has been created.', [
         { text: 'Start Connecting', onPress: () => router.replace('/(tabs)') },
       ]);
     } else {

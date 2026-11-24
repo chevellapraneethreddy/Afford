@@ -155,10 +155,18 @@ export const MilestoneCelebrationModal: React.FC<MilestoneCelebrationModalProps>
           {/* Connected Friend Avatars */}
           <View style={styles.connectedAvatarsRow}>
             <View style={styles.avatarItem}>
-              <Image
-                source={{ uri: user?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400' }}
-                style={styles.avatarImg}
-              />
+              {user?.avatarUrl && !user.avatarUrl.includes('534528741775') ? (
+                <Image
+                  source={{ uri: user.avatarUrl }}
+                  style={styles.avatarImg}
+                />
+              ) : (
+                <View style={[styles.avatarImg, { backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Text style={{ fontSize: 16, fontWeight: '800', color: BrandColors.primaryCoral }}>
+                    {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              )}
               <Text style={[styles.avatarName, { color: colors.text }]}>You</Text>
             </View>
 

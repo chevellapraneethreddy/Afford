@@ -41,7 +41,7 @@ const SAMPLE_COMMENTS: Record<string, PostComment[]> = {
       username: 'sofia_martinez',
       displayName: 'Sofia Martinez',
       avatarUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400',
-      comment: 'This warmth in your photos always makes me stop scrolling ✨',
+      comment: 'This warmth in your photos always makes me stop scrolling',
       createdAt: '45m ago',
     },
   ],
@@ -146,6 +146,9 @@ const styles = StyleSheet.create({
   },
   sheet: {
     height: '65%',
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     borderTopWidth: 1,

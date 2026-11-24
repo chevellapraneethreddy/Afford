@@ -126,6 +126,9 @@ const styles = StyleSheet.create({
   },
   card: {
     height: '75%',
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     borderTopWidth: 1,

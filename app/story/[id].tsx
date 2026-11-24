@@ -12,6 +12,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
@@ -21,12 +22,56 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Eye, Heart, Send, Sparkles, Users, X } from 'lucide-react-native';
+import { Eye, Heart, Send, Sparkles, Users, Volume2, VolumeX, X } from 'lucide-react-native';
 import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { Story } from '@/types';
 
-const { width, height } = Dimensions.get('window');
+const NativeStoryVideo: React.FC<{ uri: string }> = ({ uri }) => {
+  const [isMuted, setIsMuted] = useState(false);
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = false;
+    p.volume = 1.0;
+    p.play();
+  });
+
+  useEffect(() => {
+    if (player) {
+      player.muted = isMuted;
+    }
+  }, [player, isMuted]);
+
+  const toggleMute = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (e) {}
+    setIsMuted((prev) => !prev);
+  };
+
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        nativeControls={false}
+      />
+      <TouchableOpacity
+        onPress={toggleMute}
+        style={styles.storySoundButton}
+        activeOpacity={0.8}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      >
+        {isMuted ? (
+          <VolumeX size={18} color="#FFFFFF" />
+        ) : (
+          <Volume2 size={18} color="#FFFFFF" />
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+};
 
 export default function StoryViewerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -109,7 +154,22 @@ export default function StoryViewerScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* Background Media */}
-      <Image source={{ uri: currentStory.mediaUrl }} style={styles.mediaBackground} />
+      {currentStory.mediaType === 'video' ? (
+        Platform.OS === 'web' ? (
+          // @ts-ignore
+          <video
+            src={currentStory.mediaUrl}
+            style={{ position: 'absolute', width: '100%', height: '100%', objectFit: 'cover' }}
+            autoPlay
+            playsInline
+            loop
+          />
+        ) : (
+          <NativeStoryVideo uri={currentStory.mediaUrl} />
+        )
+      ) : (
+        <Image source={{ uri: currentStory.mediaUrl }} style={styles.mediaBackground} />
+      )}
       <View style={styles.darkGradientOverlay} />
 
       {/* Progress Bars Row */}
@@ -133,7 +193,15 @@ export default function StoryViewerScreen() {
       {/* Header Info */}
       <View style={styles.header}>
         <View style={styles.authorRow}>
-          <Image source={{ uri: currentStory.user.avatarUrl }} style={styles.avatar} />
+          {currentStory.user?.avatarUrl && !currentStory.user.avatarUrl.includes('534528741775') ? (
+            <Image source={{ uri: currentStory.user.avatarUrl }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, { backgroundColor: '#F43F5E', alignItems: 'center', justifyContent: 'center' }]}>
+              <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 16 }}>
+                {(currentStory.user?.displayName || 'P').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
           <View>
             <View style={styles.nameBadgeRow}>
               <Text style={styles.authorName}>{currentStory.user.displayName}</Text>
@@ -228,13 +296,23 @@ const styles = StyleSheet.create({
   },
   mediaBackground: {
     ...StyleSheet.absoluteFill,
-    width,
-    height,
     resizeMode: 'cover',
   },
   darkGradientOverlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  storySoundButton: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? 68 : 60,
+    right: 56,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 18,
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 30,
   },
   progressBarContainer: {
     flexDirection: 'row',
@@ -408,6 +486,9 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     padding: 20,
     minHeight: 250,
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
   },
   viewersSheetHeader: {
     flexDirection: 'row',

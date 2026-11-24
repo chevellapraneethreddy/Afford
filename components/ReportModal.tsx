@@ -147,6 +147,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     padding: 20,
     gap: 14,
+    width: '100%',
+    maxWidth: 540,
+    alignSelf: 'center',
   },
   header: {
     flexDirection: 'row',

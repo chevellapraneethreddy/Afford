@@ -360,6 +360,9 @@ const styles = StyleSheet.create({
   },
   modalSheet: {
     height: '75%',
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     borderTopWidth: 1,

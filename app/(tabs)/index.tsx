@@ -26,7 +26,7 @@ type FeedFilter = 'all' | 'close_circle' | 'favorites';
 
 export default function HomeScreen() {
   const { colors, isDark } = useTheme();
-  const { posts, user, onThisDayMemories } = useAuth();
+  const { posts, user, onThisDayMemories, refreshPosts, refreshUsers } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FeedFilter>('all');
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
@@ -39,18 +39,35 @@ export default function HomeScreen() {
     });
   }, []);
 
-  const onRefresh = () => {
+  const onRefresh = async () => {
     setRefreshing(true);
-    setTimeout(() => {
-      setRefreshing(false);
-    }, 800);
+    try {
+      await Promise.all([refreshPosts?.(), refreshUsers?.()]);
+    } catch {}
+    setRefreshing(false);
   };
 
   const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 18) return 'Good afternoon';
-    return 'Good evening';
+    try {
+      const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        hour12: false,
+        timeZone: userTimeZone,
+      });
+      const hour = parseInt(formatter.format(new Date()), 10);
+
+      if (hour >= 4 && hour < 12) return 'Good morning';
+      if (hour >= 12 && hour < 17) return 'Good afternoon';
+      if (hour >= 17 && hour < 22) return 'Good evening';
+      return 'Good night';
+    } catch {
+      const hour = new Date().getHours();
+      if (hour >= 4 && hour < 12) return 'Good morning';
+      if (hour >= 12 && hour < 17) return 'Good afternoon';
+      if (hour >= 17 && hour < 22) return 'Good evening';
+      return 'Good night';
+    }
   };
 
   const filteredPosts = posts.filter((p) => {
@@ -68,7 +85,7 @@ export default function HomeScreen() {
             {getGreeting()},
           </Text>
           <Text style={[styles.greetingTitle, { color: colors.text }]}>
-            {user?.displayName || 'Friend'} ✨
+            {user?.displayName || 'Friend'}
           </Text>
         </View>
 

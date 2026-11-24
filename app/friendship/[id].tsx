@@ -169,12 +169,18 @@ export default function FriendshipProfileScreen() {
           <View style={styles.avatarsRow}>
             {/* User Avatar */}
             <View style={styles.avatarWrap}>
-              <Image
-                source={{
-                  uri: user?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
-                }}
-                style={styles.heroAvatar}
-              />
+              {user?.avatarUrl && !user.avatarUrl.includes('534528741775') ? (
+                <Image
+                  source={{ uri: user.avatarUrl }}
+                  style={styles.heroAvatar}
+                />
+              ) : (
+                <View style={[styles.heroAvatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                  <Text style={{ fontSize: 24, fontWeight: '800', color: colors.tint }}>
+                    {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              )}
               <Text style={[styles.heroAvatarLabel, { color: colors.textSecondary }]}>You</Text>
             </View>
 

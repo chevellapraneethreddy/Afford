@@ -48,7 +48,7 @@ export const OnThisDayCard: React.FC<OnThisDayCardProps> = ({
     } else {
       createStory(
         memory.mediaUrl,
-        `✨ On This Day (${memory.yearsAgo} year${memory.yearsAgo > 1 ? 's' : ''} ago): ${memory.caption.slice(0, 50)}...`,
+        `On This Day (${memory.yearsAgo} year${memory.yearsAgo > 1 ? 's' : ''} ago): ${memory.caption.slice(0, 50)}...`,
         memory.isCloseFriendsOnly
       );
       setIsShared(true);
@@ -161,7 +161,7 @@ export const OnThisDayCard: React.FC<OnThisDayCardProps> = ({
           >
             <Share2 size={13} color="#FFFFFF" />
             <Text style={styles.shareBtnText}>
-              {isShared ? 'Shared to Story ✨' : 'Reshare Memory'}
+              {isShared ? 'Shared to Story' : 'Reshare Memory'}
             </Text>
           </LinearGradient>
         </TouchableOpacity>

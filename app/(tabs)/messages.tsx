@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FlatList,
   Image,
+  Modal,
   Platform,
   StyleSheet,
   Text,
@@ -12,14 +13,14 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Flame, Heart, MessageSquarePlus, Search, Sparkles, X } from 'lucide-react-native';
+import { Flame, Heart, MessageSquare, MessageSquarePlus, Search, SquarePen, Users, X } from 'lucide-react-native';
 import { AffordHeader } from '@/components/AffordHeader';
 import { MilestoneCelebrationModal } from '@/components/MilestoneCelebrationModal';
 import { MissYouGesture } from '@/components/MissYouGesture';
 import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import { Conversation } from '@/types';
+import { Conversation, UserProfile } from '@/types';
 
 type ChatFilter = 'all' | 'unread' | 'streaks';
 
@@ -32,9 +33,72 @@ export default function MessagesScreen() {
     triggerMilestoneCelebration,
     clearMilestoneCelebration,
     todayMissYouSentCount,
+    allUsers,
+    user: currentUser,
+    startConversation,
+    refreshUsers,
+    searchUsers,
   } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ChatFilter>('all');
+  const [showNewMessageModal, setShowNewMessageModal] = useState(false);
+  const [newUserSearch, setNewUserSearch] = useState('');
+  const [newMsgDbResults, setNewMsgDbResults] = useState<UserProfile[]>([]);
+
+  useEffect(() => {
+    refreshUsers();
+  }, [refreshUsers]);
+
+  // Live user search in new message modal
+  useEffect(() => {
+    let isCurrent = true;
+    const clean = newUserSearch.trim().replace(/^@/, '');
+    if (!clean) {
+      setNewMsgDbResults([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      searchUsers(clean).then((results) => {
+        if (isCurrent) setNewMsgDbResults(results);
+      });
+    }, 200);
+
+    return () => {
+      isCurrent = false;
+      clearTimeout(timer);
+    };
+  }, [newUserSearch, searchUsers]);
+
+  // Filter joined users for the new message selector
+  const availableUsers = (allUsers || []).filter((u) => u.id !== currentUser?.id);
+  const filteredNewUsers = React.useMemo(() => {
+    const q = newUserSearch.toLowerCase().trim().replace(/^@/, '');
+    if (!q) return availableUsers;
+
+    const map = new Map<string, UserProfile>();
+    newMsgDbResults.forEach((u) => {
+      if (u.id !== currentUser?.id) map.set(u.id, u);
+    });
+    availableUsers.forEach((u) => {
+      const d = (u.displayName || '').toLowerCase();
+      const un = (u.username || '').toLowerCase();
+      const b = (u.bio || '').toLowerCase();
+      if (d.includes(q) || un.includes(q) || b.includes(q)) {
+        if (!map.has(u.id)) map.set(u.id, u);
+      }
+    });
+    return Array.from(map.values());
+  }, [availableUsers, newMsgDbResults, newUserSearch, currentUser?.id]);
+
+  const handleStartConversationWithUser = (target: any) => {
+    setShowNewMessageModal(false);
+    const convId = startConversation(target);
+    router.push({
+      pathname: '/chat/[id]',
+      params: { id: convId },
+    });
+  };
 
   const filteredConversations = conversations.filter((c) => {
     const friend = c.otherUser;
@@ -64,7 +128,7 @@ export default function MessagesScreen() {
   const renderConversationItem = ({ item }: { item: Conversation }) => {
     const friend = item.otherUser;
     const name = friend?.displayName || item.name || 'Conversation';
-    const avatar = friend?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400';
+    const avatar = friend?.avatarUrl;
     const hasUnread = item.unreadCount > 0;
 
     return (
@@ -85,21 +149,29 @@ export default function MessagesScreen() {
           accessibilityRole="button"
           accessibilityLabel={`Open chat with ${name}. ${hasUnread ? `${item.unreadCount} unread messages.` : ''}`}
         >
-          {/* Avatar with Online indicator - Tapping opens Friendship Profile */}
+          {/* Avatar with Online indicator - Tapping opens User Profile */}
           <TouchableOpacity
             style={styles.avatarContainer}
             activeOpacity={0.8}
             onPress={() => {
               if (friend?.id) {
-                router.push({ pathname: '/friendship/[id]', params: { id: friend.id } } as any);
+                router.push({ pathname: '/user/[id]', params: { id: friend.id } } as any);
               } else {
                 handleOpenChat(item);
               }
             }}
             accessibilityRole="button"
-            accessibilityLabel={`View friendship bond with ${name}`}
+            accessibilityLabel={`View profile of ${name}`}
           >
-            <Image source={{ uri: avatar }} style={styles.avatar} />
+            {avatar ? (
+              <Image source={{ uri: avatar }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: colors.tint }}>
+                  {name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
             {item.isOnline && (
               <View
                 style={[styles.onlineBadge, { borderColor: colors.card }]}
@@ -205,21 +277,35 @@ export default function MessagesScreen() {
       <AffordHeader />
 
       <View style={styles.container}>
-        {/* Search */}
-        <View style={[styles.searchBar, { backgroundColor: colors.inputBackground, borderColor: colors.border }]}>
-          <Search size={18} color={colors.textSecondary} />
-          <TextInput
-            placeholder="Search conversations, friends..."
-            placeholderTextColor={colors.textMuted}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            style={[styles.searchInput, { color: colors.text }]}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <X size={16} color={colors.textSecondary} />
-            </TouchableOpacity>
-          )}
+        {/* Search Row with New Message Button */}
+        <View style={styles.searchRow}>
+          <View style={[styles.searchBar, { backgroundColor: colors.inputBackground, borderColor: colors.border }]}>
+            <Search size={18} color={colors.textSecondary} />
+            <TextInput
+              placeholder="Search conversations, friends..."
+              placeholderTextColor={colors.textMuted}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              style={[styles.searchInput, { color: colors.text }]}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <X size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <TouchableOpacity
+            onPress={() => {
+              refreshUsers();
+              setShowNewMessageModal(true);
+            }}
+            style={[styles.newMsgBtn, { backgroundColor: colors.tint }]}
+            accessibilityRole="button"
+            accessibilityLabel="Start a new message"
+          >
+            <SquarePen size={18} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
         {/* Miss You Interactive Banner with Daily Count & History Shortcut */}
@@ -311,16 +397,105 @@ export default function MessagesScreen() {
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Sparkles size={32} color={colors.textMuted} />
+              <MessageSquarePlus size={32} color={colors.textMuted} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>No conversations found</Text>
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 {searchQuery
                   ? 'Try searching with a different name or message'
-                  : 'Start a private conversation from Discover or user profiles!'}
+                  : 'Tap the edit icon above or select someone in Discover to start chatting!'}
               </Text>
             </View>
           }
         />
+
+        {/* New Message / Select User Modal */}
+        <Modal
+          visible={showNewMessageModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowNewMessageModal(false)}
+        >
+          <View style={styles.newMsgModalOverlay}>
+            <View style={[styles.newMsgModalSheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              {/* Header */}
+              <View style={styles.newMsgModalHeader}>
+                <Text style={[styles.newMsgModalTitle, { color: colors.text }]}>New Message</Text>
+                <TouchableOpacity
+                  onPress={() => setShowNewMessageModal(false)}
+                  style={styles.closeBtn}
+                >
+                  <X size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              {/* User search bar */}
+              <View style={[styles.newMsgSearchBar, { backgroundColor: colors.inputBackground, borderColor: colors.border }]}>
+                <Search size={16} color={colors.textSecondary} />
+                <TextInput
+                  placeholder="Search joined people by name or username..."
+                  placeholderTextColor={colors.textMuted}
+                  value={newUserSearch}
+                  onChangeText={setNewUserSearch}
+                  style={[styles.searchInput, { color: colors.text }]}
+                  autoFocus
+                />
+                {newUserSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setNewUserSearch('')}>
+                    <X size={14} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* User List */}
+              <FlatList
+                data={filteredNewUsers}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={styles.newMsgListContent}
+                ListEmptyComponent={
+                  <View style={styles.newMsgEmptyWrap}>
+                    <Users size={28} color={colors.textMuted} />
+                    <Text style={[styles.newMsgEmptyText, { color: colors.textSecondary }]}>
+                      No members matched your search
+                    </Text>
+                  </View>
+                }
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.userRow, { borderBottomColor: colors.border }]}
+                    activeOpacity={0.7}
+                    onPress={() => handleStartConversationWithUser(item)}
+                  >
+                    {item.avatarUrl ? (
+                      <Image source={{ uri: item.avatarUrl }} style={styles.userAvatar} />
+                    ) : (
+                      <View style={[styles.userAvatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                        <Text style={{ fontSize: 16, fontWeight: '700', color: colors.tint }}>
+                          {(item.displayName || 'A').charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={styles.userInfoCol}>
+                      <Text style={[styles.userDisplayName, { color: colors.text }]}>
+                        {item.displayName}
+                      </Text>
+                      <Text style={[styles.userHandle, { color: colors.textSecondary }]}>
+                        @{item.username}
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity
+                      onPress={() => handleStartConversationWithUser(item)}
+                      style={[styles.chatActionBtn, { backgroundColor: colors.tint }]}
+                    >
+                      <MessageSquare size={13} color="#FFFFFF" />
+                      <Text style={styles.chatActionText}>Chat</Text>
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          </View>
+        </Modal>
 
         {/* Friendship Milestone Celebration Modal */}
         <MilestoneCelebrationModal
@@ -340,6 +515,110 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    gap: 8,
+  },
+  newMsgBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newMsgModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  newMsgModalSheet: {
+    height: '75%',
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    padding: 20,
+  },
+  newMsgModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 14,
+  },
+  newMsgModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newMsgSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 8,
+    marginBottom: 12,
+  },
+  newMsgListContent: {
+    paddingBottom: 24,
+  },
+  newMsgEmptyWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 8,
+  },
+  newMsgEmptyText: {
+    fontSize: 13,
+  },
+  userRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 12,
+  },
+  userAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+  },
+  userInfoCol: {
+    flex: 1,
+  },
+  userDisplayName: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  userHandle: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  chatActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+  },
+  chatActionText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
   },
   searchBar: {
     flexDirection: 'row',

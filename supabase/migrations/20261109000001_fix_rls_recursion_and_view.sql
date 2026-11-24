@@ -17,7 +17,7 @@ STABLE
 SET search_path = ''
 AS $$
 BEGIN
-  RETURN EXISTS (
+  RETURN EXISTS ( 
     SELECT 1 FROM public.conversation_members
     WHERE conversation_id = conv_id AND user_id = check_user_id
   );

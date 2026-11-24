@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Dimensions,
   Modal,
   StyleSheet,
   Text,
@@ -23,8 +22,6 @@ import { BrandColors } from '@/constants/Colors';
 import { useTheme } from '@/context/ThemeContext';
 import { analytics } from '@/lib/analytics';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 interface WelcomeOnboardingModalProps {
   visible: boolean;
   onClose: () => void;
@@ -36,7 +33,7 @@ const ONBOARDING_SLIDES = [
     title: 'Feel closer.\nEven when apart.',
     description:
       'Traditional social apps overwhelmed us with endless feeds and vanity metrics. AFFORD is built for emotional presence, genuine memories, and deeper bonds with your favorite people.',
-    tag: '✨ Intentionally minimal • Zero doomscrolling',
+    tag: 'Intentionally minimal • Zero doomscrolling',
     iconType: 'heart',
   },
   {
@@ -189,7 +186,7 @@ export const WelcomeOnboardingModal: React.FC<WelcomeOnboardingModalProps> = ({
             >
               <Text style={styles.actionBtnText}>
                 {currentStep === ONBOARDING_SLIDES.length - 1
-                  ? 'Get Started ✨'
+                  ? 'Get Started'
                   : 'Continue'}
               </Text>
               {currentStep < ONBOARDING_SLIDES.length - 1 && (

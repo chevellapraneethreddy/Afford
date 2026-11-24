@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Alert,
+  Image,
   ScrollView,
   StyleSheet,
   Switch,
@@ -10,18 +11,23 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import {
   ArrowLeft,
   Bell,
+  Camera,
   Database,
   Flame,
   Heart,
+  Image as ImageIcon,
   Lock,
   LogOut,
   Moon,
   Shield,
   ShieldAlert,
   Sun,
+  Trash2,
+  User,
   UserX,
 } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
@@ -29,11 +35,69 @@ import { useTheme } from '@/context/ThemeContext';
 
 export default function SettingsScreen() {
   const { colors, isDark, themeMode, setThemeMode } = useTheme();
-  const { user, isConfigured, signOut, updateProfile } = useAuth();
+  const { user, isConfigured, signOut, updateProfile, updateAvatar } = useAuth();
 
   const [isPrivate, setIsPrivate] = useState(user?.isPrivate || false);
   const [missYouNotifs, setMissYouNotifs] = useState(user?.missYouNotificationsEnabled ?? true);
   const [streakNotifs, setStreakNotifs] = useState(user?.streakNotificationsEnabled ?? true);
+
+  const handlePickPhoto = async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.25,
+        base64: true,
+      });
+      if (!res.canceled && res.assets && res.assets[0]) {
+        const asset = res.assets[0];
+        const avatarUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        await updateAvatar(avatarUri);
+        Alert.alert('Success', 'Profile picture updated successfully!');
+      }
+    } catch (e) {
+      console.warn('Image picker error', e);
+    }
+  };
+
+  const handleTakeNewPhoto = async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Needed', 'Camera permission is required to take a new profile photo.');
+        return;
+      }
+      const res = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.25,
+        base64: true,
+      });
+      if (!res.canceled && res.assets && res.assets[0]) {
+        const asset = res.assets[0];
+        const avatarUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        await updateAvatar(avatarUri);
+        Alert.alert('Success', 'Profile picture updated successfully!');
+      }
+    } catch (e) {
+      console.warn('Camera error', e);
+    }
+  };
+
+  const handleRemoveProfilePhoto = () => {
+    Alert.alert('Remove Photo', 'Are you sure you want to remove your profile picture?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          await updateAvatar(null);
+          Alert.alert('Updated', 'Profile picture reset to default avatar.');
+        },
+      },
+    ]);
+  };
 
   const handleTogglePrivate = (val: boolean) => {
     setIsPrivate(val);
@@ -89,6 +153,61 @@ export default function SettingsScreen() {
               ? 'Your data is syncing with your live Supabase cloud database.'
               : 'Add your EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to .env to connect live backend.'}
           </Text>
+        </View>
+
+        {/* Profile Settings Section */}
+        <Text style={[styles.sectionHeading, { color: colors.textSecondary }]}>PROFILE SETTINGS</Text>
+        <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.profileSummaryRow}>
+            {user?.avatarUrl && !user.avatarUrl.includes('534528741775') ? (
+              <Image
+                source={{ uri: user.avatarUrl }}
+                style={styles.profileAvatar}
+              />
+            ) : (
+              <View style={[styles.profileAvatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                <Text style={{ fontSize: 20, fontWeight: '800', color: colors.tint }}>
+                  {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.profileDisplayName, { color: colors.text }]}>
+                {user?.displayName || 'Your Profile'}
+              </Text>
+              <Text style={[styles.profileHandle, { color: colors.textSecondary }]}>
+                @{user?.username || 'member'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={[styles.divider, { marginLeft: 0 }]} />
+
+          <View style={styles.photoActionsRow}>
+            <TouchableOpacity
+              style={[styles.photoActionBtn, { backgroundColor: colors.inputBackground, borderColor: colors.border }]}
+              onPress={handlePickPhoto}
+            >
+              <ImageIcon size={15} color={colors.text} />
+              <Text style={[styles.photoActionText, { color: colors.text }]}>Choose Photo</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.photoActionBtn, { backgroundColor: colors.inputBackground, borderColor: colors.border }]}
+              onPress={handleTakeNewPhoto}
+            >
+              <Camera size={15} color={colors.text} />
+              <Text style={[styles.photoActionText, { color: colors.text }]}>Camera</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.photoActionBtn, { backgroundColor: 'rgba(239, 68, 68, 0.08)', borderColor: 'rgba(239, 68, 68, 0.25)' }]}
+              onPress={handleRemoveProfilePhoto}
+            >
+              <Trash2 size={15} color="#EF4444" />
+              <Text style={[styles.photoActionText, { color: '#EF4444' }]}>Remove</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Appearance Section */}
@@ -281,6 +400,44 @@ const styles = StyleSheet.create({
   statusDesc: {
     fontSize: 12,
     lineHeight: 17,
+  },
+  profileSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    gap: 14,
+  },
+  profileAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  profileDisplayName: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  profileHandle: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  photoActionsRow: {
+    flexDirection: 'row',
+    padding: 12,
+    gap: 8,
+  },
+  photoActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 6,
+  },
+  photoActionText: {
+    fontSize: 12.5,
+    fontWeight: '700',
   },
   sectionHeading: {
     fontSize: 11,

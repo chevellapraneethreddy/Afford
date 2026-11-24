@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Image,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -15,18 +16,22 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import {
   Bookmark,
+  Camera,
   Edit3,
   Flame,
   Grid,
   Heart,
+  Image as ImageIcon,
   Lock,
   LogOut,
   Settings,
   ShieldCheck,
-  Sparkles,
+  Trash2,
   Users,
+  Video as VideoIcon,
   X,
 } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { AffordHeader } from '@/components/AffordHeader';
 import { CloseCircleModal } from '@/components/CloseCircleModal';
 import { MemoryVaultModal } from '@/components/MemoryVaultModal';
@@ -42,6 +47,7 @@ export default function ProfileScreen() {
     posts,
     signOut,
     updateProfile,
+    updateAvatar,
     todayMissYouSentCount,
     todayMissYouReceivedCount,
     onThisDayMemories,
@@ -49,6 +55,7 @@ export default function ProfileScreen() {
 
   const [activeTab, setActiveTab] = useState<'posts' | 'vault' | 'scrapbook'>('posts');
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showPhotoOptions, setShowPhotoOptions] = useState(false);
   const [showCloseCircleModal, setShowCloseCircleModal] = useState(false);
   const [showVaultModal, setShowVaultModal] = useState(false);
 
@@ -58,6 +65,52 @@ export default function ProfileScreen() {
   const [isPrivate, setIsPrivate] = useState(user?.isPrivate || false);
 
   const myPosts = posts.filter((p) => p.userId === user?.id || p.user.id === user?.id);
+
+  const handlePickImage = async () => {
+    setShowPhotoOptions(false);
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.25,
+        base64: true,
+      });
+      if (!res.canceled && res.assets && res.assets[0]) {
+        const asset = res.assets[0];
+        const avatarUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        await updateAvatar(avatarUri);
+      }
+    } catch (e) {
+      console.warn('Image picker error', e);
+    }
+  };
+
+  const handleTakePhoto = async () => {
+    setShowPhotoOptions(false);
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') return;
+      const res = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.25,
+        base64: true,
+      });
+      if (!res.canceled && res.assets && res.assets[0]) {
+        const asset = res.assets[0];
+        const avatarUri = asset.base64 ? `data:image/jpeg;base64,${asset.base64}` : asset.uri;
+        await updateAvatar(avatarUri);
+      }
+    } catch (e) {
+      console.warn('Camera error', e);
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    setShowPhotoOptions(false);
+    await updateAvatar(null);
+  };
 
   const handleSaveProfile = async () => {
     await updateProfile({
@@ -84,28 +137,45 @@ export default function ProfileScreen() {
           />
 
           <View style={styles.topRow}>
-            {/* Avatar with Radiant Gradient Ring */}
-            <View style={styles.avatarWrapper}>
+            {/* Avatar with Radiant Gradient Ring & Tap to Change Photo */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setShowPhotoOptions(true)}
+              style={styles.avatarWrapper}
+              accessibilityRole="button"
+              accessibilityLabel="Change profile picture"
+            >
               <LinearGradient
                 colors={BrandColors.coralGradient}
                 style={styles.avatarGradientRing}
               >
-                <Image
-                  source={{ uri: user?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400' }}
-                  style={styles.avatar}
-                />
+                {user?.avatarUrl && !user.avatarUrl.includes('534528741775') ? (
+                  <Image
+                    source={{ uri: user.avatarUrl }}
+                    style={styles.avatar}
+                  />
+                ) : (
+                  <View style={[styles.avatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={{ fontSize: 28, fontWeight: '800', color: colors.tint }}>
+                      {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
               </LinearGradient>
+              <View style={[styles.cameraBadge, { backgroundColor: colors.tint, borderColor: colors.card }]}>
+                <Camera size={12} color="#FFFFFF" />
+              </View>
               {user?.isPrivate && (
                 <View style={[styles.privateBadge, { backgroundColor: colors.tint }]}>
                   <Lock size={10} color="#FFFFFF" />
                 </View>
               )}
-            </View>
+            </TouchableOpacity>
 
             {/* Stats Row */}
             <View style={styles.statsRow}>
               <View style={styles.statCol}>
-                <Text style={[styles.statValue, { color: colors.text }]}>{myPosts.length || 6}</Text>
+                <Text style={[styles.statValue, { color: colors.text }]}>{myPosts.length}</Text>
                 <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Memories</Text>
               </View>
 
@@ -178,7 +248,7 @@ export default function ProfileScreen() {
                 colors={['#8B5CF6', '#6D28D9']}
                 style={styles.counterIconWrap}
               >
-                <Sparkles size={14} color="#FFFFFF" />
+                <Heart size={14} color="#FFFFFF" fill="#FFFFFF" />
               </LinearGradient>
               <View>
                 <View style={styles.counterNumberRow}>
@@ -288,7 +358,23 @@ export default function ProfileScreen() {
                   onPress={() => router.push('/(tabs)')}
                   style={styles.gridItem}
                 >
-                <Image source={{ uri: item.mediaUrl }} style={styles.gridImage} />
+                  {item.mediaType === 'video' ? (
+                    Platform.OS === 'web' ? (
+                      // @ts-ignore
+                      <video
+                        src={item.mediaUrl}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        muted
+                        playsInline
+                      />
+                    ) : (
+                      <View style={[styles.gridImage, { backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' }]}>
+                        <VideoIcon size={24} color="#FFFFFF" />
+                      </View>
+                    )
+                  ) : (
+                    <Image source={{ uri: item.mediaUrl }} style={styles.gridImage} />
+                  )}
                 <LinearGradient
                   colors={['transparent', 'rgba(0,0,0,0.45)']}
                   style={styles.gridOverlay}
@@ -361,6 +447,36 @@ export default function ProfileScreen() {
             </View>
 
             <ScrollView style={styles.modalForm} showsVerticalScrollIndicator={false}>
+              {/* Profile Photo Editor Section */}
+              <View style={styles.editAvatarSection}>
+                <View style={styles.editAvatarWrapper}>
+                  {user?.avatarUrl && !user.avatarUrl.includes('534528741775') ? (
+                    <Image
+                      source={{ uri: user.avatarUrl }}
+                      style={styles.editAvatarPreview}
+                    />
+                  ) : (
+                    <View style={[styles.editAvatarPreview, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                      <Text style={{ fontSize: 24, fontWeight: '800', color: colors.tint }}>
+                        {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  <TouchableOpacity
+                    style={[styles.editAvatarCameraBtn, { backgroundColor: colors.tint, borderColor: colors.card }]}
+                    onPress={() => setShowPhotoOptions(true)}
+                  >
+                    <Camera size={14} color="#FFFFFF" />
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowPhotoOptions(true)}
+                  style={styles.changePhotoBtn}
+                >
+                  <Text style={[styles.changePhotoText, { color: colors.tint }]}>Change Profile Photo</Text>
+                </TouchableOpacity>
+              </View>
+
               <Text style={[styles.formLabel, { color: colors.textSecondary }]}>Display Name</Text>
               <TextInput
                 value={displayName}
@@ -418,6 +534,77 @@ export default function ProfileScreen() {
         visible={showVaultModal}
         onClose={() => setShowVaultModal(false)}
       />
+
+      {/* Profile Photo Actions Bottom Sheet Modal */}
+      <Modal
+        visible={showPhotoOptions}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPhotoOptions(false)}
+      >
+        <TouchableOpacity
+          style={styles.photoModalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowPhotoOptions(false)}
+        >
+          <View
+            style={[styles.photoOptionsSheet, { backgroundColor: colors.card, borderColor: colors.border }]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.photoOptionsIndicator} />
+            <Text style={[styles.photoOptionsTitle, { color: colors.text }]}>Profile Picture</Text>
+            <Text style={[styles.photoOptionsSubtitle, { color: colors.textSecondary }]}>
+              Update your photo across your profile, discover, and messages
+            </Text>
+
+            <TouchableOpacity
+              style={[styles.photoOptionItem, { borderBottomColor: colors.border }]}
+              onPress={handlePickImage}
+            >
+              <View style={[styles.photoOptionIconCircle, { backgroundColor: colors.inputBackground }]}>
+                <ImageIcon size={20} color={colors.text} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.photoOptionText, { color: colors.text }]}>Choose from Gallery</Text>
+                <Text style={[styles.photoOptionSubtext, { color: colors.textSecondary }]}>Select a photo from your camera roll</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.photoOptionItem, { borderBottomColor: colors.border }]}
+              onPress={handleTakePhoto}
+            >
+              <View style={[styles.photoOptionIconCircle, { backgroundColor: colors.inputBackground }]}>
+                <Camera size={20} color={colors.text} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.photoOptionText, { color: colors.text }]}>Take Photo</Text>
+                <Text style={[styles.photoOptionSubtext, { color: colors.textSecondary }]}>Use your camera for a new picture</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.photoOptionItem, { borderBottomColor: colors.border }]}
+              onPress={handleRemovePhoto}
+            >
+              <View style={[styles.photoOptionIconCircle, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+                <Trash2 size={20} color="#EF4444" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.photoOptionText, { color: '#EF4444' }]}>Remove Current Photo</Text>
+                <Text style={[styles.photoOptionSubtext, { color: colors.textSecondary }]}>Reset to default avatar</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.photoOptionCancelBtn, { backgroundColor: colors.inputBackground, borderColor: colors.border }]}
+              onPress={() => setShowPhotoOptions(false)}
+            >
+              <Text style={[styles.photoOptionCancelText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -700,6 +887,9 @@ const styles = StyleSheet.create({
   },
   modalSheet: {
     height: '70%',
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     borderTopWidth: 1,
@@ -746,6 +936,118 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     lineHeight: 16,
     marginTop: 2,
+  },
+  cameraBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+  },
+  editAvatarSection: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 14,
+    gap: 8,
+  },
+  editAvatarWrapper: {
+    position: 'relative',
+  },
+  editAvatarPreview: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+  },
+  editAvatarCameraBtn: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+  },
+  changePhotoBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  changePhotoText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  photoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  photoOptionsSheet: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderTopWidth: 1,
+    padding: 24,
+    paddingBottom: 36,
+  },
+  photoOptionsIndicator: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#CCCCCC',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  photoOptionsTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  photoOptionsSubtitle: {
+    fontSize: 12.5,
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 20,
+  },
+  photoOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 14,
+  },
+  photoOptionIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoOptionText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  photoOptionSubtext: {
+    fontSize: 11.5,
+    marginTop: 2,
+  },
+  photoOptionCancelBtn: {
+    marginTop: 18,
+    paddingVertical: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoOptionCancelText: {
+    fontSize: 15,
+    fontWeight: '700',
   },
   saveProfileBtnWrap: {
     borderRadius: 18,

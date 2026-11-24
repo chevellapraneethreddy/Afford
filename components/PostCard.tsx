@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Image,
+  Platform,
   Share,
   StyleSheet,
   Text,
@@ -15,13 +16,82 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import * as Haptics from 'expo-haptics';
-import { Bookmark, Heart, MessageCircle, MoreHorizontal, Send, ShieldCheck, Sparkles } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { Bookmark, Heart, Image as ImageIcon, MessageCircle, MoreHorizontal, Send, ShieldCheck, Sparkles, Video, Volume2, VolumeX } from 'lucide-react-native';
 import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Post } from '@/types';
 import { CommentsSheet } from './CommentsSheet';
+
+const NativePostVideo: React.FC<{ uri: string }> = ({ uri }) => {
+  const [isMuted, setIsMuted] = useState(false);
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = false;
+    p.volume = 1.0;
+    p.play();
+  });
+
+  React.useEffect(() => {
+    if (player) {
+      player.muted = isMuted;
+    }
+  }, [player, isMuted]);
+
+  const toggleMute = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (e) {}
+    setIsMuted((prev) => !prev);
+  };
+
+  return (
+    <View style={styles.mediaImage}>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        nativeControls={true}
+      />
+      <TouchableOpacity
+        onPress={toggleMute}
+        style={styles.soundButton}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={isMuted ? 'Unmute video' : 'Mute video'}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
+        {isMuted ? (
+          <VolumeX size={18} color="#FFFFFF" />
+        ) : (
+          <Volume2 size={18} color="#FFFFFF" />
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+const PostVideoPlayer: React.FC<{ uri: string }> = ({ uri }) => {
+  if (Platform.OS === 'web') {
+    return (
+      <View style={{ width: '100%', height: '100%', position: 'relative' }}>
+        {/* @ts-ignore */}
+        <video
+          src={uri}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          controls
+          playsInline
+          loop
+        />
+      </View>
+    );
+  }
+
+  return <NativePostVideo uri={uri} />;
+};
 
 interface PostCardProps {
   post: Post;
@@ -33,6 +103,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
   const [showComments, setShowComments] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   // Heart pop animation on double tap
   const heartScale = useSharedValue(0);
@@ -105,9 +176,27 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
     <View style={[styles.container, { backgroundColor: colors.card, borderColor: colors.border }]}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.userInfo}>
+        <TouchableOpacity
+          style={styles.userInfo}
+          activeOpacity={0.8}
+          onPress={() => {
+            if (post.user?.id) {
+              router.push({ pathname: '/user/[id]', params: { id: post.user.id } } as any);
+            }
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`View profile of ${post.user.displayName}`}
+        >
           <View style={styles.avatarWrapper}>
-            <Image source={{ uri: post.user.avatarUrl }} style={styles.avatar} />
+            {post.user.avatarUrl && !post.user.avatarUrl.includes('534528741775') ? (
+              <Image source={{ uri: post.user.avatarUrl }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: colors.tint }}>
+                  {(post.user.displayName || 'A').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
           </View>
           <View>
             <View style={styles.nameRow}>
@@ -119,7 +208,6 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
               )}
               {post.isCloseFriendsOnly && (
                 <View style={styles.closeFriendBadge}>
-                  <Sparkles size={10} color="#10B981" />
                   <Text style={styles.closeFriendText}>Close Circle</Text>
                 </View>
               )}
@@ -128,7 +216,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
               @{post.user.username}
             </Text>
           </View>
-        </View>
+        </TouchableOpacity>
 
         <TouchableOpacity hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <MoreHorizontal size={20} color={colors.textSecondary} />
@@ -139,14 +227,41 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
       <TouchableOpacity
         activeOpacity={0.95}
         onPress={handleDoubleTap}
-        style={styles.mediaContainer}
+        style={[styles.mediaContainer, { backgroundColor: isDark ? '#1E293B' : '#F8FAFC' }]}
       >
-        <Image source={{ uri: post.mediaUrl }} style={styles.mediaImage} />
+        {!imageError && post.mediaUrl && !post.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') && !post.mediaUrl.includes('File not found') && !(Platform.OS === 'web' && post.mediaUrl.startsWith('file://')) ? (
+          post.mediaType === 'video' ? (
+            <PostVideoPlayer uri={post.mediaUrl} />
+          ) : (
+            <Image
+              source={{ uri: post.mediaUrl }}
+              style={styles.mediaImage}
+              resizeMode="cover"
+              onError={() => setImageError(true)}
+            />
+          )
+        ) : (
+          <View style={styles.mediaFallback}>
+            <LinearGradient
+              colors={['#1E1B4B', '#0F172A']}
+              style={styles.fallbackGradient}
+            >
+              <Sparkles size={36} color={BrandColors.primaryCoral} />
+              <Text style={styles.fallbackTitle}>
+                {post.user?.displayName || 'Memory'}
+              </Text>
+              {post.caption ? (
+                <Text style={styles.fallbackCaption} numberOfLines={2}>
+                  {post.caption}
+                </Text>
+              ) : null}
+            </LinearGradient>
+          </View>
+        )}
 
         {/* Filter Badge overlay */}
         {post.filterName && post.filterName !== 'Original' && (
           <View style={styles.filterBadge}>
-            <Sparkles size={11} color="#FFFFFF" />
             <Text style={styles.filterText}>{post.filterName}</Text>
           </View>
         )}
@@ -183,29 +298,36 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
             onPress={() => setShowComments(true)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={styles.actionBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Comments"
           >
-            <MessageCircle size={23} color={colors.text} />
+            <MessageCircle size={23} color={colors.text} strokeWidth={1.8} />
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={handleShare}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={styles.actionBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Share"
           >
-            <Send size={22} color={colors.text} />
+            <Send size={22} color={colors.text} strokeWidth={1.8} />
           </TouchableOpacity>
         </View>
 
-        {/* Vault / Bookmark */}
+        {/* Bookmark / Save */}
         <TouchableOpacity
           onPress={handleSaveToggle}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           style={styles.actionBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Save memory"
         >
           <Bookmark
-            size={22}
-            color={isSaved ? colors.tint : colors.text}
-            fill={isSaved ? colors.tint : 'none'}
+            size={23}
+            color={isSaved ? (colors.text || '#0F172A') : colors.text}
+            fill={isSaved ? (colors.text || '#0F172A') : 'none'}
+            strokeWidth={1.8}
           />
         </TouchableOpacity>
       </View>
@@ -329,14 +451,52 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 1,
     position: 'relative',
-    backgroundColor: '#0A0A0F',
+    backgroundColor: '#F8FAFC',
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
   },
   mediaImage: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
+  },
+  soundButton: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    borderRadius: 18,
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+    elevation: 5,
+  },
+  mediaFallback: {
+    width: '100%',
+    height: '100%',
+  },
+  fallbackGradient: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 8,
+  },
+  fallbackTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: 6,
+  },
+  fallbackCaption: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 13,
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
   filterBadge: {
     position: 'absolute',

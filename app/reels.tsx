@@ -1,12 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Dimensions,
   FlatList,
   Image,
+  Platform,
   Share,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,8 +19,6 @@ import { ArrowLeft, Heart, MessageCircle, Music, Send, ShieldCheck, UserCheck, U
 import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { SHORT_VIDEOS } from '@/lib/mockData';
-
-const { width, height } = Dimensions.get('window');
 
 interface ViewableItemInfo {
   item: any;
@@ -70,6 +69,9 @@ function ReelVideoPlayer({
 }
 
 export default function ReelsScreen() {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const reelWidth = Platform.OS === 'web' ? Math.min(windowWidth, 600) : windowWidth;
+  const reelHeight = windowHeight;
   const { followingIds, toggleFollow } = useAuth();
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
@@ -108,7 +110,7 @@ export default function ReelsScreen() {
     const isFollowing = followingIds.includes(item.creator.id);
 
     return (
-      <View style={styles.reelItemContainer}>
+      <View style={[styles.reelItemContainer, { width: reelWidth, height: reelHeight }]}>
         {/* Background Video */}
         {isPlaying ? (
           <ReelVideoPlayer
@@ -207,9 +209,10 @@ export default function ReelsScreen() {
         renderItem={renderItem}
         pagingEnabled
         showsVerticalScrollIndicator={false}
-        snapToInterval={height}
+        snapToInterval={reelHeight}
         snapToAlignment="start"
         decelerationRate="fast"
+        contentContainerStyle={Platform.OS === 'web' ? { alignItems: 'center' } : undefined}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
       />
@@ -249,15 +252,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   reelItemContainer: {
-    width,
-    height,
     position: 'relative',
     backgroundColor: '#000',
   },
   fullVideo: {
     ...StyleSheet.absoluteFill,
-    width,
-    height,
   },
   overlayGradient: {
     ...StyleSheet.absoluteFill,

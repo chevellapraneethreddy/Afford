@@ -13,7 +13,7 @@ import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 
-const EMOTIONAL_TAGS = ['✨ Grateful', '🌅 Nostalgic', '❤️ Warm', '☕ Peaceful', '😂 Smiling'];
+const EMOTIONAL_TAGS = ['Grateful', '🌅 Nostalgic', '❤️ Warm', '☕ Peaceful', '😂 Smiling'];
 
 const FRIEND_AVATARS = [
   'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150',

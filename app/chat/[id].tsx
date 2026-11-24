@@ -23,7 +23,6 @@ import {
   MoreVertical,
   Play,
   Send,
-  Sparkles,
 } from 'lucide-react-native';
 import { ConnectionQuestionCard } from '@/components/ConnectionQuestionCard';
 import { MilestoneCelebrationModal } from '@/components/MilestoneCelebrationModal';
@@ -36,7 +35,7 @@ import { Message } from '@/types';
 
 const CHAT_ICEBREAKERS = [
   'Miss you! ❤️',
-  'Thinking of you ✨',
+  'Thinking of you',
   'Coffee soon? ☕',
   'Hope you have an amazing day 🌟',
 ];
@@ -49,6 +48,7 @@ export default function ChatScreen() {
     messages,
     sendMessage,
     sendMissYouGesture,
+    markUserActive,
     user,
     connectionQuestions,
     milestoneCelebration,
@@ -78,11 +78,27 @@ export default function ChatScreen() {
     }
   }, [conversationMessages.length]);
 
+  // Keep presence status Active now while interacting in chat
+  useEffect(() => {
+    if (friend?.id && markUserActive) {
+      markUserActive(friend.id, id);
+    }
+    const interval = setInterval(() => {
+      if (friend?.id && markUserActive) {
+        markUserActive(friend.id, id);
+      }
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [friend?.id, id, markUserActive]);
+
   const handleSendText = (textToSend?: string) => {
     const text = textToSend || inputText;
     if (!text.trim() || !id) return;
     sendMessage(id, text.trim(), 'text');
     setInputText('');
+    if (friend?.id && markUserActive) {
+      markUserActive(friend.id, id);
+    }
   };
 
   const handleSendImage = async () => {
@@ -195,17 +211,22 @@ export default function ChatScreen() {
             style={styles.headerUser}
             onPress={() => {
               if (friend?.id) {
-                router.push({ pathname: '/friendship/[id]', params: { id: friend.id } } as any);
+                router.push({ pathname: '/user/[id]', params: { id: friend.id } } as any);
               }
             }}
             activeOpacity={0.75}
             accessibilityRole="button"
-            accessibilityLabel={`View friendship bond with ${friend?.displayName || 'Friend'}`}
+            accessibilityLabel={`View profile of ${friend?.displayName || 'Friend'}`}
           >
-            <Image
-              source={{ uri: friend?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400' }}
-              style={styles.headerAvatar}
-            />
+            {friend?.avatarUrl ? (
+              <Image source={{ uri: friend.avatarUrl }} style={styles.headerAvatar} />
+            ) : (
+              <View style={[styles.headerAvatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: colors.tint }}>
+                  {(friend?.displayName || conversation?.name || 'C').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
             <View>
               <View style={styles.headerNameRow}>
                 <Text style={[styles.headerName, { color: colors.text }]} numberOfLines={1}>
@@ -296,7 +317,7 @@ export default function ChatScreen() {
                     },
                   ]}
                 >
-                  <Sparkles size={13} color="#FF4D8D" />
+                  <Heart size={13} color="#FF4D8D" fill="#FF4D8D" />
                   <Text style={[styles.questionToggleText, { color: colors.tint }]}>
                     {showQuestionCard
                       ? 'Hide Connection Question ▲'

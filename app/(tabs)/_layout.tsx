@@ -1,20 +1,48 @@
-import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Platform, StyleSheet, useWindowDimensions, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Tabs } from 'expo-router';
 import { Compass, Heart, Home, MessageCircle, Plus, User } from 'lucide-react-native';
+import { FirstTimeNameModal } from '@/components/FirstTimeNameModal';
 import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 
 export default function TabLayout() {
   const { colors, isDark } = useTheme();
-  const { conversations } = useAuth();
+  const { conversations, updateProfile } = useAuth();
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width > 640;
+
+  const [showNameModal, setShowNameModal] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem('@afford_has_entered_name').then((hasName) => {
+      if (!hasName) {
+        setShowNameModal(true);
+      }
+    });
+  }, []);
+
+  const handleNameSubmit = async (name: string) => {
+    const cleanHandle = name.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20);
+    await updateProfile({
+      displayName: name,
+      username: cleanHandle || 'friend',
+    });
+    await Promise.all([
+      AsyncStorage.setItem('@afford_has_entered_name', 'true'),
+      AsyncStorage.setItem('@afford_onboarding_shown', 'true'),
+    ]);
+    setShowNameModal(false);
+  };
 
   const totalUnread = conversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0);
 
   return (
-    <Tabs
+    <>
+      <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.tint,
@@ -31,6 +59,18 @@ export default function TabLayout() {
           shadowOpacity: isDark ? 0.3 : 0.05,
           shadowRadius: 8,
           elevation: 8,
+          ...(isDesktopWeb
+            ? {
+                maxWidth: 600,
+                width: '100%',
+                left: '50%',
+                transform: [{ translateX: '-50%' as any }],
+                borderLeftWidth: 1,
+                borderRightWidth: 1,
+                borderLeftColor: colors.border,
+                borderRightColor: colors.border,
+              }
+            : {}),
         },
         tabBarLabelStyle: {
           fontSize: 10.5,
@@ -110,6 +150,11 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    <FirstTimeNameModal
+      visible={showNameModal}
+      onSubmit={handleNameSubmit}
+    />
+  </>
   );
 }
 
