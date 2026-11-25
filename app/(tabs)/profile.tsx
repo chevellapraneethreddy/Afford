@@ -26,6 +26,7 @@ import {
   LogOut,
   Settings,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Users,
   Video as VideoIcon,
@@ -351,42 +352,54 @@ export default function ProfileScreen() {
               </View>
             )}
             <View style={styles.gridContainer}>
-              {posts.slice(0, 9).map((item) => (
-                <TouchableOpacity
-                  key={item.id}
-                  activeOpacity={0.85}
-                  onPress={() => router.push('/(tabs)')}
-                  style={styles.gridItem}
-                >
-                  {item.mediaType === 'video' ? (
-                    Platform.OS === 'web' ? (
-                      // @ts-ignore
-                      <video
-                        src={item.mediaUrl}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        muted
-                        playsInline
-                      />
+              {myPosts.length > 0 ? (
+                myPosts.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    activeOpacity={0.85}
+                    onPress={() => router.push('/(tabs)')}
+                    style={styles.gridItem}
+                  >
+                    {item.mediaType === 'video' ? (
+                      Platform.OS === 'web' ? (
+                        // @ts-ignore
+                        <video
+                          src={item.mediaUrl}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          muted
+                          playsInline
+                        />
+                      ) : (
+                        <View style={[styles.gridImage, { backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' }]}>
+                          <VideoIcon size={24} color="#FFFFFF" />
+                        </View>
+                      )
                     ) : (
-                      <View style={[styles.gridImage, { backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' }]}>
-                        <VideoIcon size={24} color="#FFFFFF" />
+                      <Image source={{ uri: item.mediaUrl }} style={styles.gridImage} />
+                    )}
+                    <LinearGradient
+                      colors={['transparent', 'rgba(0,0,0,0.45)']}
+                      style={styles.gridOverlay}
+                    >
+                      <View style={styles.gridLikesRow}>
+                        <Heart size={11} color="#FFFFFF" fill="#FFFFFF" />
+                        <Text style={styles.gridLikesText}>{item.likesCount}</Text>
                       </View>
-                    )
-                  ) : (
-                    <Image source={{ uri: item.mediaUrl }} style={styles.gridImage} />
-                  )}
-                <LinearGradient
-                  colors={['transparent', 'rgba(0,0,0,0.45)']}
-                  style={styles.gridOverlay}
-                >
-                  <View style={styles.gridLikesRow}>
-                    <Heart size={11} color="#FFFFFF" fill="#FFFFFF" />
-                    <Text style={styles.gridLikesText}>{item.likesCount}</Text>
-                  </View>
-                </LinearGradient>
-              </TouchableOpacity>
-            ))}
-          </View>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <View style={{ width: '100%', paddingVertical: 36, alignItems: 'center' }}>
+                  <Sparkles size={28} color={colors.tint} />
+                  <Text style={{ marginTop: 8, fontSize: 14, color: colors.textSecondary, fontWeight: '500' }}>
+                    No memories shared yet
+                  </Text>
+                  <Text style={{ marginTop: 4, fontSize: 12, color: colors.textMuted }}>
+                    Capture photos & videos to build your timeline
+                  </Text>
+                </View>
+              )}
+            </View>
         </View>
         ) : activeTab === 'vault' ? (
           <View style={styles.vaultContainer}>

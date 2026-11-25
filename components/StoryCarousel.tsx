@@ -133,7 +133,15 @@ export const StoryCarousel: React.FC = () => {
 
   const handleUserStoryPress = () => {
     if (myStory) {
-      handleOpenStory(myStory);
+      Alert.alert(
+        'Your Story',
+        'View your active 24-hour story or add a new moment.',
+        [
+          { text: 'View Story', onPress: () => handleOpenStory(myStory) },
+          { text: 'Add New Story', onPress: handleAddStoryOptions },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
     } else {
       handleAddStoryOptions();
     }

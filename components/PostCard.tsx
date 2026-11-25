@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Image,
   Platform,
@@ -26,14 +26,30 @@ import { useTheme } from '@/context/ThemeContext';
 import { Post } from '@/types';
 import { CommentsSheet } from './CommentsSheet';
 
-const NativePostVideo: React.FC<{ uri: string }> = ({ uri }) => {
+const NativePostVideo: React.FC<{ uri: string; isVisible?: boolean }> = ({ uri, isVisible = true }) => {
   const [isMuted, setIsMuted] = useState(false);
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = false;
     p.volume = 1.0;
-    p.play();
   });
+
+  useEffect(() => {
+    if (!player) return;
+    if (isVisible) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [player, isVisible]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        player?.pause();
+      } catch {}
+    };
+  }, [player]);
 
   const toggleMute = () => {
     try {
@@ -74,30 +90,44 @@ const NativePostVideo: React.FC<{ uri: string }> = ({ uri }) => {
   );
 };
 
-const PostVideoPlayer: React.FC<{ uri: string }> = ({ uri }) => {
+const PostVideoPlayer: React.FC<{ uri: string; isVisible?: boolean }> = ({ uri, isVisible = true }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !videoRef.current) return;
+    if (isVisible) {
+      videoRef.current.play().catch(() => {});
+    } else {
+      videoRef.current.pause();
+    }
+  }, [isVisible]);
+
   if (Platform.OS === 'web') {
     return (
       <View style={{ width: '100%', height: '100%', position: 'relative' }}>
         {/* @ts-ignore */}
         <video
+          ref={videoRef}
           src={uri}
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           controls
           playsInline
           loop
+          autoPlay={isVisible}
         />
       </View>
     );
   }
 
-  return <NativePostVideo uri={uri} />;
+  return <NativePostVideo uri={uri} isVisible={isVisible} />;
 };
 
 interface PostCardProps {
   post: Post;
+  isVisible?: boolean;
 }
 
-export const PostCard: React.FC<PostCardProps> = ({ post }) => {
+export const PostCard: React.FC<PostCardProps> = ({ post, isVisible = true }) => {
   const { colors, isDark } = useTheme();
   const { toggleLikePost } = useAuth();
   const [showComments, setShowComments] = useState(false);
@@ -233,7 +263,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
       >
         {!imageError && post.mediaUrl && !post.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') && !post.mediaUrl.includes('File not found') && !(Platform.OS === 'web' && post.mediaUrl.startsWith('file://')) ? (
           post.mediaType === 'video' ? (
-            <PostVideoPlayer uri={post.mediaUrl} />
+            <PostVideoPlayer uri={post.mediaUrl} isVisible={isVisible} />
           ) : (
             <Image
               source={{ uri: post.mediaUrl }}

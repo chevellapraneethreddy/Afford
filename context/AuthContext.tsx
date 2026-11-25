@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import {
   CURRENT_USER,
@@ -91,6 +92,7 @@ const STORAGE_KEYS = {
   MISS_YOU_HISTORY: '@afford_miss_you_history',
   CONNECTION_QUESTIONS: '@afford_connection_questions',
   ALL_USERS: '@afford_all_users',
+  LIKED_POSTS: '@afford_liked_post_ids',
 };
 
 /**
@@ -362,16 +364,28 @@ export async function uploadMediaToSupabase(
   const mimeType = mediaType === 'video' ? 'video/mp4' : 'image/jpeg';
   const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
   const filePath = `uploads/${fileName}`;
+  const uploadEndpoint = `${supabaseUrl}/storage/v1/object/afford-media/${filePath}`;
+  const publicCdnUrl = `${supabaseUrl}/storage/v1/object/public/afford-media/${filePath}`;
 
   // 1. Native Mobile (Android & iOS): Stream directly from local filesystem to Supabase Storage CDN
   if (Platform.OS !== 'web' && (uri.startsWith('file:') || uri.startsWith('content:'))) {
+    // Attempt A: Native uploadAsync with BINARY_CONTENT via expo-file-system/legacy
     try {
-      const uploadResult = await FileSystem.uploadAsync(
-        `${supabaseUrl}/storage/v1/object/afford-media/${filePath}`,
-        uri,
+      let sourceUri = uri;
+      if (uri.startsWith('content:') && (LegacyFileSystem as any).cacheDirectory) {
+        try {
+          const tempPath = `${(LegacyFileSystem as any).cacheDirectory}upload_${Date.now()}.${ext}`;
+          await LegacyFileSystem.copyAsync({ from: uri, to: tempPath });
+          sourceUri = tempPath;
+        } catch {}
+      }
+
+      const uploadResult = await LegacyFileSystem.uploadAsync(
+        uploadEndpoint,
+        sourceUri,
         {
           httpMethod: 'POST',
-          uploadType: ((FileSystem as any).FileSystemUploadType?.BINARY_CONTENT ?? 0) as any,
+          uploadType: (LegacyFileSystem.FileSystemUploadType?.BINARY_CONTENT ?? 0) as any,
           headers: {
             apikey: supabaseKey,
             Authorization: `Bearer ${supabaseKey}`,
@@ -381,14 +395,64 @@ export async function uploadMediaToSupabase(
       );
 
       if (uploadResult.status >= 200 && uploadResult.status < 300) {
-        const publicUrl = `${supabaseUrl}/storage/v1/object/public/afford-media/${filePath}`;
-        console.log('[Native Upload Success] Uploaded to Supabase CDN:', publicUrl);
-        return publicUrl;
+        console.log('[Native Upload Success] Uploaded to Supabase CDN:', publicCdnUrl);
+        return publicCdnUrl;
       } else {
-        console.warn('[Native Upload Error] Supabase returned status:', uploadResult.status, uploadResult.body);
+        console.warn('[Native Upload Notice] uploadAsync returned status:', uploadResult.status, uploadResult.body);
       }
     } catch (nativeErr) {
-      console.warn('[Native Upload Error] FileSystem.uploadAsync failed:', nativeErr);
+      console.warn('[Native Upload Notice] LegacyFileSystem.uploadAsync failed:', nativeErr);
+    }
+
+    // Attempt B: Read as base64 and upload raw binary to Supabase Storage
+    try {
+      const base64Data = await LegacyFileSystem.readAsStringAsync(uri, {
+        encoding: (LegacyFileSystem.EncodingType?.Base64 ?? 'base64') as any,
+      });
+      if (base64Data && !base64Data.includes('RmlsZSBub3QgZm91bmQ=')) {
+        const rawBytes = base64ToUint8Array(base64Data);
+        const res = await fetch(uploadEndpoint, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': mimeType,
+          },
+          body: rawBytes as any,
+        });
+        if (res.ok) {
+          console.log('[Native Base64 Upload Success] Uploaded to Supabase CDN:', publicCdnUrl);
+          return publicCdnUrl;
+        }
+      }
+    } catch (readErr) {
+      console.warn('[Native Upload Notice] Base64 read attempt note:', readErr);
+    }
+
+    // Attempt C: React Native FormData upload
+    try {
+      const formData = new FormData();
+      formData.append('file', {
+        uri,
+        name: fileName,
+        type: mimeType,
+      } as any);
+
+      const formRes = await fetch(uploadEndpoint, {
+        method: 'POST',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+        },
+        body: formData,
+      });
+
+      if (formRes.ok) {
+        console.log('[Native FormData Upload Success] Uploaded to Supabase CDN:', publicCdnUrl);
+        return publicCdnUrl;
+      }
+    } catch (formErr) {
+      console.warn('[Native Upload Notice] FormData attempt note:', formErr);
     }
   }
 
@@ -406,7 +470,7 @@ export async function uploadMediaToSupabase(
 
     if (body) {
       const uploadRes = await fetch(
-        `${supabaseUrl}/storage/v1/object/afford-media/${filePath}`,
+        uploadEndpoint,
         {
           method: 'POST',
           headers: {
@@ -419,9 +483,8 @@ export async function uploadMediaToSupabase(
       );
 
       if (uploadRes.ok) {
-        const publicUrl = `${supabaseUrl}/storage/v1/object/public/afford-media/${filePath}`;
-        console.log('[Storage Upload Success] Uploaded to Supabase CDN:', publicUrl);
-        return publicUrl;
+        console.log('[Storage Upload Success] Uploaded to Supabase CDN:', publicCdnUrl);
+        return publicCdnUrl;
       }
     }
   } catch (storageErr) {
@@ -469,6 +532,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     postsRef.current = posts;
   }, [posts]);
+  const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set());
+  const likedPostIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    likedPostIdsRef.current = likedPostIds;
+  }, [likedPostIds]);
   const [stories, setStories] = useState<Story[]>(INITIAL_STORIES);
   const [conversations, setConversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
   const [messages, setMessages] = useState<Record<string, Message[]>>(INITIAL_MESSAGES);
@@ -515,6 +583,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           savedQuestions,
           savedUsers,
           savedFollowing,
+          savedLikedPosts,
         ] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.USER),
           AsyncStorage.getItem(STORAGE_KEYS.POSTS),
@@ -527,7 +596,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           AsyncStorage.getItem(STORAGE_KEYS.CONNECTION_QUESTIONS),
           AsyncStorage.getItem(STORAGE_KEYS.ALL_USERS),
           AsyncStorage.getItem(STORAGE_KEYS.FOLLOWING),
+          AsyncStorage.getItem(STORAGE_KEYS.LIKED_POSTS),
         ]);
+
+        if (savedLikedPosts) {
+          try {
+            const parsed = JSON.parse(savedLikedPosts);
+            if (Array.isArray(parsed)) {
+              const set = new Set<string>(parsed);
+              setLikedPostIds(set);
+              likedPostIdsRef.current = set;
+            }
+          } catch {}
+        }
 
         // Emergency recovery from Android SQLite_FULL: purge any bloated offline post/story caches
         if (savedPosts && (savedPosts.includes('data:video/') || savedPosts.length > 50000)) {
@@ -1404,6 +1485,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const safeAuthorAvatar = (isMe && userRef.current?.avatarUrl) ? userRef.current.avatarUrl : (author.avatar_url || author.avatarUrl || '');
             const finalAvatar = safeAuthorAvatar && !safeAuthorAvatar.includes('534528741775') ? safeAuthorAvatar : '';
 
+            const existing = prev.find((item) => item.id === p.id);
+            const isLiked = likedPostIdsRef.current.has(p.id) || (existing?.isLikedByMe ?? false);
+            const resolvedLikesCount = Math.max(
+              p.likes_count || 0,
+              existing?.likesCount || 0,
+              isLiked ? 1 : 0
+            );
+
             map.set(p.id, {
               id: p.id,
               userId: p.user_id,
@@ -1419,10 +1508,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               caption: p.caption || '',
               filterName: p.filter_name || 'Original',
               isCloseFriendsOnly: p.is_close_friends_only || false,
-              likesCount: p.likes_count || 0,
-              commentsCount: p.comments_count || 0,
-              sharesCount: p.shares_count || 0,
-              isLikedByMe: false,
+              likesCount: resolvedLikesCount,
+              commentsCount: Math.max(p.comments_count || 0, existing?.commentsCount || 0),
+              sharesCount: Math.max(p.shares_count || 0, existing?.sharesCount || 0),
+              isLikedByMe: isLiked,
               createdAt: p.created_at,
             });
           });
@@ -1592,6 +1681,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const next = [payload.post, ...prev];
             safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
             return next;
+          });
+        } else if (payload?.type === 'POST_LIKED' && payload.postId) {
+          setPosts((prev) => {
+            return prev.map((p) => {
+              if (p.id === payload.postId) {
+                const isFromMe = !!userRef.current && payload.userId === userRef.current.id;
+                return {
+                  ...p,
+                  likesCount: typeof payload.likesCount === 'number' ? payload.likesCount : (p.likesCount + 1),
+                  ...(isFromMe ? { isLikedByMe: payload.isLiked } : {}),
+                };
+              }
+              return p;
+            });
           });
         } else if (payload?.type === 'NEW_MESSAGE' && payload.conversationId && payload.message) {
           const myId = userRef.current?.id;
@@ -1969,6 +2072,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return next;
           });
         }
+      })
+      .on('broadcast', { event: 'POST_LIKED' }, (payload: any) => {
+        const data = payload?.payload;
+        if (!data || !data.postId) return;
+        setPosts((prev) => {
+          return prev.map((p) => {
+            if (p.id === data.postId) {
+              const isFromMe = !!userRef.current && data.userId === userRef.current.id;
+              return {
+                ...p,
+                likesCount: typeof data.likesCount === 'number' ? data.likesCount : (p.likesCount + 1),
+                ...(isFromMe ? { isLikedByMe: data.isLiked } : {}),
+              };
+            }
+            return p;
+          });
+        });
       })
       .on('broadcast', { event: 'REQUEST_POSTS_SYNC' }, () => {
         const myPosts = postsRef.current;
@@ -2377,14 +2497,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const toggleLikePost = (postId: string) => {
+    let nextIsLiked = false;
+    let nextCount = 0;
+    let targetPost: Post | undefined;
+
     setPosts((prev) => {
       const updated = prev.map((p) => {
         if (p.id === postId) {
-          const isLiked = !p.isLikedByMe;
+          targetPost = p;
+          nextIsLiked = !p.isLikedByMe;
+          nextCount = nextIsLiked ? p.likesCount + 1 : Math.max(0, p.likesCount - 1);
           return {
             ...p,
-            isLikedByMe: isLiked,
-            likesCount: isLiked ? p.likesCount + 1 : Math.max(0, p.likesCount - 1),
+            isLikedByMe: nextIsLiked,
+            likesCount: nextCount,
           };
         }
         return p;
@@ -2392,6 +2518,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(updated));
       return updated;
     });
+
+    setLikedPostIds((prev) => {
+      const next = new Set(prev);
+      if (nextIsLiked) {
+        next.add(postId);
+      } else {
+        next.delete(postId);
+      }
+      safeAsyncStorageSet(STORAGE_KEYS.LIKED_POSTS, JSON.stringify(Array.from(next)));
+      return next;
+    });
+
+    const likePayload = {
+      type: 'POST_LIKED',
+      postId,
+      userId: user?.id,
+      isLiked: nextIsLiked,
+      likesCount: nextCount,
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const bc = new BroadcastChannel('afford_live_events_bus');
+        bc.postMessage(likePayload);
+        bc.close();
+      } catch {}
+    }
+
+    if (isConfigured && presenceChannelRef.current) {
+      try {
+        presenceChannelRef.current.send({
+          type: 'broadcast',
+          event: 'POST_LIKED',
+          payload: likePayload,
+        });
+      } catch {}
+    }
+
+    if (isConfigured && user && nextIsLiked && targetPost && targetPost.userId !== user.id) {
+      try {
+        const authorId = isValidUUID(targetPost.userId) ? targetPost.userId : toValidUUID(targetPost.userId);
+        const validActorId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
+        supabase.from('notifications').insert({
+          user_id: authorId,
+          actor_id: validActorId,
+          type: 'like',
+          title: 'New Like ❤️',
+          body: `${user.displayName || 'Someone'} liked your memory`,
+          data: { post_id: postId },
+        }).then(() => {});
+      } catch {}
+    }
   };
 
   const addPostComment = (postId: string, comment: string) => {
@@ -2420,15 +2598,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ) => {
     if (!user) return;
     const mediaUrl = await uploadMediaToSupabase(rawMediaUrl, mediaType);
+    if (!mediaUrl) {
+      console.warn('Post media upload failed: empty mediaUrl returned');
+      throw new Error('Media upload failed. Please check your internet connection and try again.');
+    }
     const authorUsername = user.username && user.username !== 'alex_rivera' && user.username !== 'member'
       ? user.username
       : (user.displayName && user.displayName !== 'Afford Member' ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : 'praneeth');
     const authorDisplayName = user.displayName && user.displayName !== 'Afford Member' ? user.displayName : 'Praneeth';
+    const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
+
     const newPost: Post = {
       id: `post_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-      userId: user.id,
+      userId: validUserId,
       user: {
-        id: user.id,
+        id: validUserId,
         username: authorUsername,
         displayName: authorDisplayName,
         avatarUrl: user.avatarUrl,
@@ -2487,18 +2671,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (isConfigured) {
       try {
-        const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
-        const { error: insertErr } = await supabase.from('posts').insert({
+        // Ensure profile exists in public.profiles so foreign keys and profile lookups succeed
+        await supabase.from('profiles').upsert({
+          id: validUserId,
+          username: authorUsername,
+          display_name: authorDisplayName,
+          avatar_url: user.avatarUrl || '',
+          bio: user.bio || '',
+          is_private: false,
+        }, { onConflict: 'id' });
+
+        const { data: insertedPost, error: insertErr } = await supabase.from('posts').insert({
           user_id: validUserId,
           media_url: mediaUrl,
           media_type: mediaType,
           caption,
           filter_name: filterName,
           is_close_friends_only: isCloseFriends,
-        });
+        }).select().single();
+
         if (insertErr) {
           console.warn('Supabase post insert error:', insertErr);
-        } else {
+        } else if (insertedPost) {
+          setPosts((prev) => {
+            const updated = prev.map((p) => (p.id === newPost.id ? { ...p, id: insertedPost.id } : p));
+            safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(updated));
+            return updated;
+          });
           await Promise.all([fetchAllProfiles(), fetchPosts()]);
         }
       } catch (err) {
@@ -2515,6 +2714,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ) => {
     if (!user) return;
     const mediaUrl = await uploadMediaToSupabase(rawMediaUrl, mediaType);
+    if (!mediaUrl) {
+      console.warn('Story media upload failed: empty mediaUrl returned');
+      throw new Error('Media upload failed. Please check your internet connection and try again.');
+    }
     const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
     const authorUsername = user.username && user.username !== 'alex_rivera' && user.username !== 'member'
       ? user.username
@@ -2581,16 +2784,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (isConfigured) {
       try {
-        const { error: storyErr } = await supabase.from('stories').insert({
+        await supabase.from('profiles').upsert({
+          id: validUserId,
+          username: authorUsername,
+          display_name: authorDisplayName,
+          avatar_url: user.avatarUrl || '',
+          bio: user.bio || '',
+          is_private: false,
+        }, { onConflict: 'id' });
+
+        const { data: insertedStory, error: storyErr } = await supabase.from('stories').insert({
           user_id: validUserId,
           media_url: mediaUrl,
           media_type: mediaType,
           caption: caption || '',
           is_close_friends_only: isCloseFriends,
-        });
+          duration_seconds: 5,
+          expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+        }).select().single();
+
         if (storyErr) {
           console.warn('Supabase story insert error:', storyErr);
-        } else {
+        } else if (insertedStory) {
+          setStories((prev) => {
+            const updated = prev.map((s) => (s.id === newStory.id ? { ...s, id: insertedStory.id } : s));
+            safeAsyncStorageSet(STORAGE_KEYS.STORIES, JSON.stringify(updated));
+            return updated;
+          });
           await fetchStories();
         }
       } catch (err) {

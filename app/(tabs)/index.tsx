@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   FlatList,
   Platform,
@@ -9,28 +9,45 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LinearGradient } from 'expo-linear-gradient';
+import { usePathname } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Flame, Heart, Sparkles } from 'lucide-react-native';
+import { Flame, Sparkles } from 'lucide-react-native';
 import { AffordHeader } from '@/components/AffordHeader';
 import { DailyPromptCard } from '@/components/DailyPromptCard';
 import { OnThisDayCard } from '@/components/OnThisDayCard';
 import { PostCard } from '@/components/PostCard';
 import { StoryCarousel } from '@/components/StoryCarousel';
 import { WelcomeOnboardingModal } from '@/components/WelcomeOnboardingModal';
-import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Post } from '@/types';
 
 type FeedFilter = 'all' | 'close_circle' | 'favorites';
 
+const FEED_VIEWABILITY_CONFIG = {
+  itemVisiblePercentThreshold: 60,
+};
+
 export default function HomeScreen() {
   const { colors, isDark } = useTheme();
+  const pathname = usePathname();
+  const isFocused = pathname === '/' || pathname === '/(tabs)' || pathname === '';
   const { posts, user, onThisDayMemories, refreshPosts, refreshUsers } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FeedFilter>('all');
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
+  const [visiblePostId, setVisiblePostId] = useState<string | null>(null);
+
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: { item: Post; key: string }[] }) => {
+    if (viewableItems && viewableItems.length > 0) {
+      const active = viewableItems.find((v) => v.item) || viewableItems[0];
+      if (active && active.item) {
+        setVisiblePostId(active.item.id);
+      }
+    } else {
+      setVisiblePostId(null);
+    }
+  }, []);
 
   useEffect(() => {
     AsyncStorage.getItem('@afford_onboarding_shown').then((shown) => {
@@ -178,11 +195,19 @@ export default function HomeScreen() {
       <FlatList
         data={filteredPosts}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <View style={styles.postWrapper}>
-            <PostCard post={item} />
-          </View>
-        )}
+        renderItem={({ item, index }) => {
+          const isItemVisible = isFocused && (
+            visiblePostId === item.id ||
+            (!visiblePostId && index === 0)
+          );
+          return (
+            <View style={styles.postWrapper}>
+              <PostCard post={item} isVisible={isItemVisible} />
+            </View>
+          );
+        }}
+        viewabilityConfig={FEED_VIEWABILITY_CONFIG}
+        onViewableItemsChanged={onViewableItemsChanged}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={
           <View style={styles.emptyFeedBox}>
