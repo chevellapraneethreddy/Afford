@@ -114,7 +114,7 @@ export default function UserProfileScreen() {
             setFetchedUser({
               id: data.id,
               username: data.username || 'member',
-              displayName: data.display_name || data.username || 'Afford Member',
+              displayName: data.display_name || data.username || 'Member',
               avatarUrl: data.avatar_url || '',
               bio: data.bio || '',
               isPrivate: data.is_private || false,
@@ -169,7 +169,7 @@ export default function UserProfileScreen() {
     return {
       id: id || 'user_unknown',
       username: 'member',
-      displayName: 'Afford Member',
+      displayName: 'Member',
       avatarUrl: '',
       bio: 'Cherishing genuine connections.',
       isPrivate: false,

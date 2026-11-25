@@ -38,16 +38,21 @@ export default function HomeScreen() {
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [visiblePostId, setVisiblePostId] = useState<string | null>(null);
 
-  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: { item: Post; key: string }[] }) => {
-    if (viewableItems && viewableItems.length > 0) {
-      const active = viewableItems.find((v) => v.item) || viewableItems[0];
-      if (active && active.item) {
-        setVisiblePostId(active.item.id);
-      }
-    } else {
-      setVisiblePostId(null);
-    }
-  }, []);
+  const viewabilityConfigCallbackPairs = React.useRef([
+    {
+      viewabilityConfig: FEED_VIEWABILITY_CONFIG,
+      onViewableItemsChanged: ({ viewableItems }: { viewableItems: { item: Post; key: string }[] }) => {
+        if (viewableItems && viewableItems.length > 0) {
+          const active = viewableItems.find((v) => v.item) || viewableItems[0];
+          if (active && active.item) {
+            setVisiblePostId((prev) => (prev === active.item.id ? prev : active.item.id));
+          }
+        } else {
+          setVisiblePostId(null);
+        }
+      },
+    },
+  ]);
 
   useEffect(() => {
     AsyncStorage.getItem('@afford_onboarding_shown').then((shown) => {
@@ -188,6 +193,21 @@ export default function HomeScreen() {
     </View>
   );
 
+  const renderItem = useCallback(
+    ({ item, index }: { item: Post; index: number }) => {
+      const isItemVisible = isFocused && (
+        visiblePostId === item.id ||
+        (!visiblePostId && index === 0)
+      );
+      return (
+        <View style={styles.postWrapper}>
+          <PostCard post={item} isVisible={isItemVisible} />
+        </View>
+      );
+    },
+    [isFocused, visiblePostId]
+  );
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <AffordHeader />
@@ -195,19 +215,12 @@ export default function HomeScreen() {
       <FlatList
         data={filteredPosts}
         keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => {
-          const isItemVisible = isFocused && (
-            visiblePostId === item.id ||
-            (!visiblePostId && index === 0)
-          );
-          return (
-            <View style={styles.postWrapper}>
-              <PostCard post={item} isVisible={isItemVisible} />
-            </View>
-          );
-        }}
-        viewabilityConfig={FEED_VIEWABILITY_CONFIG}
-        onViewableItemsChanged={onViewableItemsChanged}
+        renderItem={renderItem}
+        viewabilityConfigCallbackPairs={viewabilityConfigCallbackPairs.current}
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS !== 'web'}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={
           <View style={styles.emptyFeedBox}>

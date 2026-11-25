@@ -56,10 +56,8 @@ export default function CreateScreen() {
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
 
   useEffect(() => {
-    if (params.mode === 'story') {
-      setTargetType('story');
-    } else if (params.mode === 'post') {
-      setTargetType('post');
+    if (params.mode === 'story' || params.mode === 'post') {
+      setTargetType((prev) => (prev === params.mode ? prev : (params.mode as 'post' | 'story')));
     }
   }, [params.mode]);
 

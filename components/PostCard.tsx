@@ -127,13 +127,17 @@ interface PostCardProps {
   isVisible?: boolean;
 }
 
-export const PostCard: React.FC<PostCardProps> = ({ post, isVisible = true }) => {
+const PostCardComponent: React.FC<PostCardProps> = ({ post, isVisible = true }) => {
   const { colors, isDark } = useTheme();
   const { toggleLikePost } = useAuth();
   const [showComments, setShowComments] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [imageError, setImageError] = useState(false);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [post.mediaUrl]);
 
   // Heart pop animation on double tap
   const heartScale = useSharedValue(0);
@@ -419,6 +423,17 @@ export const PostCard: React.FC<PostCardProps> = ({ post, isVisible = true }) =>
     </View>
   );
 };
+
+export const PostCard = React.memo(PostCardComponent, (prev, next) => {
+  return (
+    prev.post.id === next.post.id &&
+    prev.post.likesCount === next.post.likesCount &&
+    prev.post.isLikedByMe === next.post.isLikedByMe &&
+    prev.post.commentsCount === next.post.commentsCount &&
+    prev.post.mediaUrl === next.post.mediaUrl &&
+    prev.isVisible === next.isVisible
+  );
+});
 
 const styles = StyleSheet.create({
   container: {

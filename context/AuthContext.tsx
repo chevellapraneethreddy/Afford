@@ -585,6 +585,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const [allUsers, setAllUsers] = useState<UserProfile[]>(initialAllUsers);
+  const allUsersRef = useRef<UserProfile[]>(allUsers);
+  useEffect(() => {
+    allUsersRef.current = allUsers;
+  }, [allUsers]);
 
   // Derived today's counts
   const todayMissYouSentCount = missYouHistory.filter(
@@ -675,6 +679,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
         }
 
+        // Synchronize user identity with Supabase safely without violating unique constraints
+        if (isConfigured && currentUserObj) {
+          try {
+            const { data: byId } = await supabase
+              .from('profiles')
+              .select('id, username, display_name')
+              .eq('id', currentUserObj.id)
+              .maybeSingle();
+
+            if (byId) {
+              await supabase.from('profiles').update({
+                display_name: currentUserObj.displayName || 'Praneeth',
+                avatar_url: currentUserObj.avatarUrl || '',
+                bio: currentUserObj.bio || '',
+                updated_at: new Date().toISOString(),
+              }).eq('id', currentUserObj.id);
+            } else {
+              const cleanUsername = currentUserObj.username && currentUserObj.username !== 'alex_rivera' && currentUserObj.username !== 'member'
+                ? currentUserObj.username
+                : 'praneeth';
+              const { data: byUsername } = await supabase
+                .from('profiles')
+                .select('id, username, display_name')
+                .eq('username', cleanUsername)
+                .maybeSingle();
+
+              if (byUsername) {
+                currentUserObj.id = byUsername.id;
+                currentUserObj.username = byUsername.username;
+                currentUserObj.displayName = byUsername.display_name || currentUserObj.displayName || 'Praneeth';
+                await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
+                await safeAsyncStorageSet('@afford_device_user_id', byUsername.id);
+                await supabase.from('profiles').update({
+                  display_name: currentUserObj.displayName || 'Praneeth',
+                  avatar_url: currentUserObj.avatarUrl || '',
+                  bio: currentUserObj.bio || '',
+                  updated_at: new Date().toISOString(),
+                }).eq('id', byUsername.id);
+              } else {
+                await supabase.from('profiles').insert({
+                  id: currentUserObj.id,
+                  username: cleanUsername,
+                  display_name: currentUserObj.displayName || 'Praneeth',
+                  avatar_url: currentUserObj.avatarUrl || '',
+                  bio: currentUserObj.bio || '',
+                  is_private: false,
+                  updated_at: new Date().toISOString(),
+                });
+              }
+            }
+          } catch (syncErr) {
+            console.warn('Profile sync on startup note:', syncErr);
+          }
+        }
+
         setUser(currentUserObj);
         userRef.current = currentUserObj;
 
@@ -699,53 +758,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const parsedPosts: Post[] = JSON.parse(savedPosts);
             const validPosts = parsedPosts.filter(isValidSocialPost);
             setPosts(validPosts.length > 0 ? validPosts : INITIAL_POSTS);
-            safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(validPosts));
-
-            // Auto-heal local images to portable base64 and sync unsynced posts to Supabase
-            (async () => {
-              for (const p of validPosts) {
-                if (!isValidSocialPost(p)) continue;
-                let currentMedia = p.mediaUrl;
-                if (currentMedia && (currentMedia.startsWith('file:') || currentMedia.startsWith('content:'))) {
-                  const portableMedia = await normalizeImageUri(currentMedia, 800, 0.5);
-                  if (portableMedia && !portableMedia.startsWith('file:')) {
-                    p.mediaUrl = portableMedia;
-                    currentMedia = portableMedia;
-                    setPosts((prev) => {
-                      const next = prev.map((item) => (item.id === p.id ? { ...item, mediaUrl: portableMedia } : item));
-                      safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
-                      return next;
-                    });
-                  }
-                }
-
-                // If current user's post is not yet in Supabase, insert it
-                if (isConfigured && currentUserObj && isValidSocialPost(p) && (p.userId === currentUserObj.id || p.user?.id === currentUserObj.id || p.user?.displayName === currentUserObj.displayName)) {
-                  try {
-                    const validAuthorId = isValidUUID(currentUserObj.id) ? currentUserObj.id : toValidUUID(currentUserObj.id);
-                    const { data: existing } = await supabase
-                      .from('posts')
-                      .select('id')
-                      .eq('user_id', validAuthorId)
-                      .eq('caption', p.caption || '')
-                      .limit(1);
-
-                    if (!existing || existing.length === 0) {
-                      await supabase.from('posts').insert({
-                        user_id: validAuthorId,
-                        media_url: currentMedia,
-                        media_type: p.mediaType || 'image',
-                        caption: p.caption || '',
-                        filter_name: p.filterName || 'Original',
-                        is_close_friends_only: p.isCloseFriendsOnly || false,
-                      });
-                    }
-                  } catch (syncErr) {
-                    console.warn('Auto-sync post to Supabase failed:', syncErr);
-                  }
-                }
-              }
-            })();
           } catch {}
         }
         if (savedStories) setStories(JSON.parse(savedStories));
@@ -781,56 +793,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return Array.from(map.values());
         });
 
-        // Immediately push profile and posts to Supabase so they are visible to all users
-        if (currentUserObj && currentUserObj.displayName && isConfigured) {
-          supabase
-            .from('profiles')
-            .upsert({
-              id: currentUserObj.id,
-              display_name: currentUserObj.displayName,
-              username: currentUserObj.username,
-              bio: currentUserObj.bio || '',
-              avatar_url: currentUserObj.avatarUrl,
-              is_private: currentUserObj.isPrivate || false,
-              miss_you_notifications_enabled: currentUserObj.missYouNotificationsEnabled ?? true,
-              streak_notifications_enabled: currentUserObj.streakNotificationsEnabled ?? true,
-              updated_at: new Date().toISOString(),
-            })
-            .then(({ error }) => {
-              if (error) console.warn('Sync profile on startup error:', error);
-            });
-        }
-
-        if (savedPosts && isConfigured && currentUserObj) {
-          try {
-            const parsedPosts: Post[] = JSON.parse(savedPosts);
-            parsedPosts.forEach((p) => {
-              if (p.userId === currentUserObj.id || p.user?.id === currentUserObj.id) {
-                const validUserId = isValidUUID(currentUserObj.id) ? currentUserObj.id : toValidUUID(currentUserObj.id);
-                const validPostId = isValidUUID(p.id) ? p.id : undefined;
-                supabase
-                  .from('posts')
-                  .upsert({
-                    ...(validPostId ? { id: validPostId } : {}),
-                    user_id: validUserId,
-                    media_url: p.mediaUrl,
-                    media_type: p.mediaType || 'image',
-                    caption: p.caption,
-                    filter_name: p.filterName,
-                    is_close_friends_only: p.isCloseFriendsOnly,
-                    likes_count: p.likesCount || 0,
-                    comments_count: p.commentsCount || 0,
-                    shares_count: p.sharesCount || 0,
-                    created_at: p.createdAt || new Date().toISOString(),
-                  })
-                  .then(({ error }) => {
-                    if (error) console.warn('Sync post to Supabase error:', error);
-                  });
-              }
-            });
-          } catch {}
-        }
-
         fetchAllProfiles();
         fetchPosts();
       } catch (err) {
@@ -840,6 +802,82 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     })();
   }, []);
+
+  // Ensure current user profile exists in Supabase public.profiles safely without constraint collisions
+  const ensureUserProfileSynced = useCallback(async (userObj: UserProfile): Promise<string> => {
+    if (!isConfigured) return userObj.id;
+    try {
+      const { data: byId } = await supabase
+        .from('profiles')
+        .select('id, username, display_name')
+        .eq('id', userObj.id)
+        .maybeSingle();
+
+      if (byId) {
+        await supabase.from('profiles').update({
+          display_name: userObj.displayName || 'Praneeth',
+          avatar_url: userObj.avatarUrl || '',
+          bio: userObj.bio || '',
+          updated_at: new Date().toISOString(),
+        }).eq('id', userObj.id);
+        return userObj.id;
+      }
+
+      const cleanUsername = userObj.username && userObj.username !== 'alex_rivera' && userObj.username !== 'member'
+        ? userObj.username
+        : 'praneeth';
+      const { data: byUsername } = await supabase
+        .from('profiles')
+        .select('id, username, display_name')
+        .eq('username', cleanUsername)
+        .maybeSingle();
+
+      if (byUsername) {
+        userObj.id = byUsername.id;
+        userObj.username = byUsername.username;
+        userObj.displayName = byUsername.display_name || userObj.displayName || 'Praneeth';
+        setUser({ ...userObj });
+        userRef.current = { ...userObj };
+        safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(userObj));
+        safeAsyncStorageSet('@afford_device_user_id', byUsername.id);
+        await supabase.from('profiles').update({
+          display_name: userObj.displayName || 'Praneeth',
+          avatar_url: userObj.avatarUrl || '',
+          bio: userObj.bio || '',
+          updated_at: new Date().toISOString(),
+        }).eq('id', byUsername.id);
+        return byUsername.id;
+      }
+
+      const validId = isValidUUID(userObj.id) ? userObj.id : toValidUUID(userObj.id);
+      const { error: insertErr } = await supabase.from('profiles').insert({
+        id: validId,
+        username: cleanUsername,
+        display_name: userObj.displayName || 'Praneeth',
+        avatar_url: userObj.avatarUrl || '',
+        bio: userObj.bio || '',
+        is_private: false,
+        updated_at: new Date().toISOString(),
+      });
+
+      if (insertErr) {
+        const uniqueUsername = `${cleanUsername}_${validId.slice(0, 5)}`;
+        await supabase.from('profiles').insert({
+          id: validId,
+          username: uniqueUsername,
+          display_name: userObj.displayName || 'Praneeth',
+          avatar_url: userObj.avatarUrl || '',
+          bio: userObj.bio || '',
+          is_private: false,
+          updated_at: new Date().toISOString(),
+        });
+      }
+      return validId;
+    } catch (e) {
+      console.warn('Profile sync error:', e);
+      return userObj.id;
+    }
+  }, [isConfigured]);
 
   // Synchronize all profiles from Supabase and cache them locally
   const fetchAllProfiles = useCallback(async () => {
@@ -854,7 +892,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const mappedUsers: UserProfile[] = dbProfiles.map((p: any) => ({
           id: p.id,
           username: p.username || 'member',
-          displayName: p.display_name || p.username || 'Afford Member',
+          displayName: p.display_name || p.username || 'Praneeth',
           avatarUrl: p.avatar_url && !p.avatar_url.includes('534528741775') ? p.avatar_url : '',
           bio: p.bio || '',
           isPrivate: p.is_private || false,
@@ -1415,7 +1453,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             if (!existing) {
               changed = true;
-              const otherProfile = allUsers.find((u) => u.id === otherId);
+              const otherProfile = allUsersRef.current.find((u) => u.id === otherId);
               map.set(cId, {
                 id: cId,
                 isGroup: false,
@@ -1457,19 +1495,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err) {
       console.warn('Failed to sync offline messages:', err);
     }
-  }, [isConfigured, user?.id, allUsers]);
+  }, [isConfigured]);
 
   // Synchronize all posts from Supabase so every user's moments and memories appear
   const fetchPosts = useCallback(async () => {
-    if (presenceChannelRef.current) {
-      try {
-        presenceChannelRef.current.send({
-          type: 'broadcast',
-          event: 'REQUEST_POSTS_SYNC',
-          payload: {},
-        });
-      } catch {}
-    }
     if (!isConfigured) return;
     try {
       const [{ data: dbPosts, error }, { data: dbProfiles }] = await Promise.all([
@@ -1505,7 +1534,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const isMe = !!userRef.current && (p.user_id === userRef.current.id || (userRef.current.username && profileMap.get(p.user_id)?.username === userRef.current.username));
             const author = isMe
               ? userRef.current
-              : (profileMap.get(p.user_id) || allUsers.find((u) => u.id === p.user_id) || {
+              : (profileMap.get(p.user_id) || allUsersRef.current.find((u) => u.id === p.user_id) || {
                   id: p.user_id,
                   username: 'praneeth',
                   displayName: 'Praneeth',
@@ -1518,11 +1547,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             const existing = prev.find((item) => item.id === p.id);
             const isLiked = likedPostIdsRef.current.has(p.id) || (existing?.isLikedByMe ?? false);
-            const resolvedLikesCount = Math.max(
-              p.likes_count || 0,
-              existing?.likesCount || 0,
-              isLiked ? 1 : 0
-            );
+            const resolvedLikesCount = existing
+              ? existing.likesCount
+              : Math.max(p.likes_count || 0, isLiked ? 1 : 0);
 
             map.set(p.id, {
               id: p.id,
@@ -1550,14 +1577,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const next = Array.from(map.values()).sort(
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           );
-          safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
+          if (prev.length !== next.length || (next[0]?.id !== prev[0]?.id)) {
+            safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
+          }
           return next;
         });
       }
     } catch (err) {
       console.warn('Failed to fetch posts:', err);
     }
-  }, [isConfigured, allUsers]);
+  }, [isConfigured]);
 
   // Synchronize all stories from Supabase so every 24-hour moment appears
   const fetchStories = useCallback(async () => {
@@ -1595,7 +1624,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const isMe = !!userRef.current && (s.user_id === userRef.current.id || (userRef.current.username && profileMap.get(s.user_id)?.username === userRef.current.username));
             const author = isMe
               ? userRef.current
-              : (profileMap.get(s.user_id) || allUsers.find((u) => u.id === s.user_id) || {
+              : (profileMap.get(s.user_id) || allUsersRef.current.find((u) => u.id === s.user_id) || {
                   id: s.user_id,
                   username: 'praneeth',
                   displayName: 'Praneeth',
@@ -1626,14 +1655,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const next = Array.from(map.values()).sort(
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           );
-          safeAsyncStorageSet(STORAGE_KEYS.STORIES, JSON.stringify(next));
+          if (prev.length !== next.length || (next[0]?.id !== prev[0]?.id)) {
+            safeAsyncStorageSet(STORAGE_KEYS.STORIES, JSON.stringify(next));
+          }
           return next;
         });
       }
     } catch (err) {
       console.warn('Failed to fetch stories:', err);
     }
-  }, [isConfigured, allUsers]);
+  }, [isConfigured]);
 
   // Periodic background synchronization of user directory, posts, and offline messages
   useEffect(() => {
@@ -1647,7 +1678,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       fetchPosts();
       fetchStories();
       syncOfflineMessages();
-    }, 4000);
+    }, 12000);
     return () => clearInterval(interval);
   }, [isConfigured, fetchAllProfiles, fetchPosts, fetchStories, syncOfflineMessages]);
 
@@ -2703,17 +2734,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isConfigured) {
       try {
         // Ensure profile exists in public.profiles so foreign keys and profile lookups succeed
-        await supabase.from('profiles').upsert({
-          id: validUserId,
-          username: authorUsername,
-          display_name: authorDisplayName,
-          avatar_url: user.avatarUrl || '',
-          bio: user.bio || '',
-          is_private: false,
-        }, { onConflict: 'id' });
+        const authorId = await ensureUserProfileSynced(user);
 
         const { data: insertedPost, error: insertErr } = await supabase.from('posts').insert({
-          user_id: validUserId,
+          user_id: authorId,
           media_url: mediaUrl,
           media_type: mediaType,
           caption,
@@ -2725,7 +2749,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Supabase post insert error:', insertErr);
         } else if (insertedPost) {
           setPosts((prev) => {
-            const updated = prev.map((p) => (p.id === newPost.id ? { ...p, id: insertedPost.id } : p));
+            const updated = prev.map((p) => (p.id === newPost.id ? { ...p, id: insertedPost.id, userId: authorId } : p));
             safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(updated));
             return updated;
           });
@@ -2815,17 +2839,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (isConfigured) {
       try {
-        await supabase.from('profiles').upsert({
-          id: validUserId,
-          username: authorUsername,
-          display_name: authorDisplayName,
-          avatar_url: user.avatarUrl || '',
-          bio: user.bio || '',
-          is_private: false,
-        }, { onConflict: 'id' });
+        const authorId = await ensureUserProfileSynced(user);
 
         const { data: insertedStory, error: storyErr } = await supabase.from('stories').insert({
-          user_id: validUserId,
+          user_id: authorId,
           media_url: mediaUrl,
           media_type: mediaType,
           caption: caption || '',
@@ -2838,7 +2855,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Supabase story insert error:', storyErr);
         } else if (insertedStory) {
           setStories((prev) => {
-            const updated = prev.map((s) => (s.id === newStory.id ? { ...s, id: insertedStory.id } : s));
+            const updated = prev.map((s) => (s.id === newStory.id ? { ...s, id: insertedStory.id, userId: authorId } : s));
             safeAsyncStorageSet(STORAGE_KEYS.STORIES, JSON.stringify(updated));
             return updated;
           });
