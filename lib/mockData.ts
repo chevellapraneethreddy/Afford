@@ -12,20 +12,37 @@ import {
   UserProfile,
 } from '../types';
 
-export const CURRENT_USER: UserProfile = {
-  id: 'usr_me_01',
-  username: 'praneeth',
-  displayName: 'Praneeth',
-  avatarUrl: 'https://aqmntovbkteirfzkqvtc.supabase.co/storage/v1/object/public/afford-media/uploads/avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128.jpg',
-  bio: 'Capturing quiet moments & meaningful connections. ✨ Film photographer & wanderer.',
+export const DEFAULT_BLANK_USER: UserProfile = {
+  id: '',
+  username: '',
+  displayName: 'Afford Member',
+  avatarUrl: '',
+  bio: '',
   isPrivate: false,
   missYouNotificationsEnabled: true,
   streakNotificationsEnabled: true,
-  isVerified: true,
-  followersCount: 1420,
-  followingCount: 388,
-  missYouSentCount: 74,
-  missYouReceivedCount: 128,
+  isVerified: false,
+  followersCount: 0,
+  followingCount: 0,
+  missYouSentCount: 0,
+  missYouReceivedCount: 0,
+  createdAt: '2024-01-01T00:00:00Z',
+};
+
+export const CURRENT_USER: UserProfile = {
+  id: 'usr_me_01',
+  username: 'member',
+  displayName: 'Afford Member',
+  avatarUrl: '',
+  bio: '',
+  isPrivate: false,
+  missYouNotificationsEnabled: true,
+  streakNotificationsEnabled: true,
+  isVerified: false,
+  followersCount: 0,
+  followingCount: 0,
+  missYouSentCount: 0,
+  missYouReceivedCount: 0,
   createdAt: '2024-01-15T10:00:00Z',
 };
 

@@ -150,7 +150,7 @@ export default function ProfileScreen() {
                 colors={BrandColors.coralGradient}
                 style={styles.avatarGradientRing}
               >
-                {user?.avatarUrl && !user.avatarUrl.includes('534528741775') ? (
+                {user?.avatarUrl && !user.avatarUrl.includes('534528741775') && !user.avatarUrl.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128') ? (
                   <Image
                     source={{ uri: user.avatarUrl }}
                     style={styles.avatar}
@@ -158,7 +158,7 @@ export default function ProfileScreen() {
                 ) : (
                   <View style={[styles.avatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
                     <Text style={{ fontSize: 28, fontWeight: '800', color: colors.tint }}>
-                      {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                      {(user?.displayName || user?.username || 'U').charAt(0).toUpperCase()}
                     </Text>
                   </View>
                 )}
@@ -182,14 +182,14 @@ export default function ProfileScreen() {
 
               <View style={styles.statCol}>
                 <Text style={[styles.statValue, { color: colors.text }]}>
-                  {user?.followersCount || 1420}
+                  {user?.followersCount ?? 0}
                 </Text>
                 <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Friends</Text>
               </View>
 
               <View style={styles.statCol}>
                 <Text style={[styles.statValue, { color: colors.text }]}>
-                  {user?.followingCount || 388}
+                  {user?.followingCount ?? 0}
                 </Text>
                 <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Connected</Text>
               </View>
@@ -199,15 +199,15 @@ export default function ProfileScreen() {
           {/* Names & Bio */}
           <View style={styles.bioSection}>
             <View style={styles.nameRow}>
-              <Text style={[styles.displayName, { color: colors.text }]}>{user?.displayName}</Text>
+              <Text style={[styles.displayName, { color: colors.text }]}>{user?.displayName || 'Member'}</Text>
               {user?.isVerified && <ShieldCheck size={16} color="#3B82F6" />}
             </View>
-            <Text style={[styles.handleText, { color: colors.textSecondary }]}>@{user?.username}</Text>
+            <Text style={[styles.handleText, { color: colors.textSecondary }]}>@{user?.username || 'member'}</Text>
             {user?.bio ? (
               <Text style={[styles.bioText, { color: colors.text }]}>{user.bio}</Text>
             ) : (
-              <Text style={[styles.bioText, { color: colors.textSecondary }]}>
-                Cherishing authentic connections & unscripted memories.
+              <Text style={[styles.bioText, { color: colors.textSecondary, fontStyle: 'italic' }]}>
+                No bio yet. Tap Edit Profile to introduce yourself.
               </Text>
             )}
           </View>
@@ -230,7 +230,7 @@ export default function ProfileScreen() {
               <View>
                 <View style={styles.counterNumberRow}>
                   <Text style={[styles.counterNumber, { color: colors.text }]}>
-                    {user?.missYouSentCount || 74}
+                    {user?.missYouSentCount ?? 0}
                   </Text>
                   {todayMissYouSentCount > 0 && (
                     <View style={styles.counterTodayChip}>
@@ -254,7 +254,7 @@ export default function ProfileScreen() {
               <View>
                 <View style={styles.counterNumberRow}>
                   <Text style={[styles.counterNumber, { color: colors.text }]}>
-                    {user?.missYouReceivedCount || 128}
+                    {user?.missYouReceivedCount ?? 0}
                   </Text>
                   {todayMissYouReceivedCount > 0 && (
                     <View style={[styles.counterTodayChip, { backgroundColor: 'rgba(168, 85, 247, 0.2)' }]}>
@@ -346,9 +346,9 @@ export default function ProfileScreen() {
         {/* Tab Content */}
         {activeTab === 'posts' ? (
           <View>
-            {onThisDayMemories && onThisDayMemories.length > 0 && (
+            {onThisDayMemories && onThisDayMemories.length > 0 && user?.id && onThisDayMemories.some((m) => m.user?.id === user.id) && (
               <View style={{ marginBottom: 16 }}>
-                <OnThisDayCard memory={onThisDayMemories[0]} />
+                <OnThisDayCard memory={onThisDayMemories.find((m) => m.user?.id === user.id)!} />
               </View>
             )}
             <View style={styles.gridContainer}>
@@ -463,7 +463,7 @@ export default function ProfileScreen() {
               {/* Profile Photo Editor Section */}
               <View style={styles.editAvatarSection}>
                 <View style={styles.editAvatarWrapper}>
-                  {user?.avatarUrl && !user.avatarUrl.includes('534528741775') ? (
+                  {user?.avatarUrl && !user.avatarUrl.includes('534528741775') && !user.avatarUrl.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128') ? (
                     <Image
                       source={{ uri: user.avatarUrl }}
                       style={styles.editAvatarPreview}
@@ -471,7 +471,7 @@ export default function ProfileScreen() {
                   ) : (
                     <View style={[styles.editAvatarPreview, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
                       <Text style={{ fontSize: 24, fontWeight: '800', color: colors.tint }}>
-                        {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                        {(user?.displayName || user?.username || 'U').charAt(0).toUpperCase()}
                       </Text>
                     </View>
                   )}

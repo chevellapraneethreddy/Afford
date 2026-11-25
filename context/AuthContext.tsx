@@ -6,6 +6,7 @@ import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
 import {
   CURRENT_USER,
+  DEFAULT_BLANK_USER,
   getFriendshipMilestone,
   INITIAL_CONNECTION_QUESTIONS,
   INITIAL_CONVERSATIONS,
@@ -544,7 +545,7 @@ export async function uploadMediaToSupabase(
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<UserProfile | null>(CURRENT_USER);
+  const [user, setUser] = useState<UserProfile | null>(DEFAULT_BLANK_USER);
   const userRef = useRef<UserProfile | null>(user);
   useEffect(() => {
     userRef.current = user;
@@ -570,8 +571,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [messages, setMessages] = useState<Record<string, Message[]>>(INITIAL_MESSAGES);
   const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
   const [dailyPrompt, setDailyPrompt] = useState<DailyPrompt>(INITIAL_DAILY_PROMPT);
-  const [followingIds, setFollowingIds] = useState<string[]>(['usr_maya', 'usr_elena', 'usr_marcus', 'usr_sofia']);
-  const [missYouHistory, setMissYouHistory] = useState<MissYouEvent[]>(INITIAL_MISS_YOU_HISTORY);
+  const [followingIds, setFollowingIds] = useState<string[]>([]);
+  const [missYouHistory, setMissYouHistory] = useState<MissYouEvent[]>([]);
   const [onThisDayMemories, setOnThisDayMemories] = useState<OnThisDayMemory[]>(INITIAL_ON_THIS_DAY_MEMORIES);
   const [connectionQuestions, setConnectionQuestions] = useState<ConnectionQuestion[]>(INITIAL_CONNECTION_QUESTIONS);
   const [milestoneCelebration, setMilestoneCelebration] = useState<{ milestone: FriendshipMilestone; friend: UserProfile } | null>(null);
@@ -671,63 +672,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
             }
           } catch {
-            currentUserObj = { ...CURRENT_USER, id: deviceUserId };
+            currentUserObj = {
+              ...DEFAULT_BLANK_USER,
+              id: deviceUserId,
+              username: `member_${deviceUserId.replace(/-/g, '').slice(0, 6)}`,
+            };
             await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
           }
         } else {
-          currentUserObj = { ...CURRENT_USER, id: deviceUserId };
+          currentUserObj = {
+            ...DEFAULT_BLANK_USER,
+            id: deviceUserId,
+            username: `member_${deviceUserId.replace(/-/g, '').slice(0, 6)}`,
+          };
+          await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
+        }
+
+        // Cleanse any legacy cached mock data (e.g. if previous versions seeded creator photo/bio into new device user)
+        const isNotPraneethAccount = currentUserObj.username?.toLowerCase() !== 'praneeth';
+        let didCleanse = false;
+        if (isNotPraneethAccount) {
+          if (currentUserObj.avatarUrl && (currentUserObj.avatarUrl.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128') || currentUserObj.avatarUrl.includes('534528741775'))) {
+            currentUserObj.avatarUrl = '';
+            didCleanse = true;
+          }
+          if (currentUserObj.bio && currentUserObj.bio.includes('Capturing quiet moments & meaningful connections')) {
+            currentUserObj.bio = '';
+            didCleanse = true;
+          }
+          if (currentUserObj.isVerified) {
+            currentUserObj.isVerified = false;
+            didCleanse = true;
+          }
+          if (currentUserObj.displayName === 'Praneeth') {
+            currentUserObj.displayName = 'Afford Member';
+            didCleanse = true;
+          }
+        }
+        if (didCleanse) {
           await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
         }
 
         // Synchronize user identity with Supabase safely without violating unique constraints
-        if (isConfigured && currentUserObj) {
+        if (isConfigured && currentUserObj && isValidUUID(currentUserObj.id)) {
           try {
             const { data: byId } = await supabase
               .from('profiles')
-              .select('id, username, display_name')
+              .select('id, username, display_name, avatar_url, bio, is_verified, followers_count, following_count')
               .eq('id', currentUserObj.id)
               .maybeSingle();
 
             if (byId) {
+              const sanitizedAvatar = (byId.avatar_url && !byId.avatar_url.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128') && !byId.avatar_url.includes('534528741775'))
+                ? byId.avatar_url
+                : (currentUserObj.avatarUrl || '');
+              const sanitizedBio = (byId.bio && !byId.bio.includes('Capturing quiet moments & meaningful connections'))
+                ? byId.bio
+                : (currentUserObj.bio || '');
+
+              currentUserObj = {
+                ...currentUserObj,
+                username: byId.username || currentUserObj.username,
+                displayName: byId.display_name || currentUserObj.displayName,
+                avatarUrl: sanitizedAvatar,
+                bio: sanitizedBio,
+                isVerified: byId.is_verified || false,
+                followersCount: byId.followers_count || 0,
+                followingCount: byId.following_count || 0,
+              };
+
               await supabase.from('profiles').update({
-                display_name: currentUserObj.displayName || 'Praneeth',
-                avatar_url: currentUserObj.avatarUrl || '',
-                bio: currentUserObj.bio || '',
+                display_name: currentUserObj.displayName,
+                avatar_url: currentUserObj.avatarUrl,
+                bio: currentUserObj.bio,
+                is_verified: currentUserObj.isVerified,
                 updated_at: new Date().toISOString(),
               }).eq('id', currentUserObj.id);
-            } else {
-              const cleanUsername = currentUserObj.username && currentUserObj.username !== 'alex_rivera' && currentUserObj.username !== 'member'
-                ? currentUserObj.username
-                : 'praneeth';
-              const { data: byUsername } = await supabase
-                .from('profiles')
-                .select('id, username, display_name')
-                .eq('username', cleanUsername)
-                .maybeSingle();
 
-              if (byUsername) {
-                currentUserObj.id = byUsername.id;
-                currentUserObj.username = byUsername.username;
-                currentUserObj.displayName = byUsername.display_name || currentUserObj.displayName || 'Praneeth';
-                await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
-                await safeAsyncStorageSet('@afford_device_user_id', byUsername.id);
-                await supabase.from('profiles').update({
-                  display_name: currentUserObj.displayName || 'Praneeth',
-                  avatar_url: currentUserObj.avatarUrl || '',
-                  bio: currentUserObj.bio || '',
-                  updated_at: new Date().toISOString(),
-                }).eq('id', byUsername.id);
-              } else {
-                await supabase.from('profiles').insert({
-                  id: currentUserObj.id,
-                  username: cleanUsername,
-                  display_name: currentUserObj.displayName || 'Praneeth',
-                  avatar_url: currentUserObj.avatarUrl || '',
-                  bio: currentUserObj.bio || '',
-                  is_private: false,
-                  updated_at: new Date().toISOString(),
-                });
-              }
+              await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
+            } else {
+              const cleanUsername = currentUserObj.username && currentUserObj.username !== 'alex_rivera' && currentUserObj.username !== 'member' && currentUserObj.username !== 'praneeth'
+                ? currentUserObj.username
+                : `member_${currentUserObj.id.replace(/-/g, '').slice(0, 6)}`;
+
+              await supabase.from('profiles').insert({
+                id: currentUserObj.id,
+                username: cleanUsername,
+                display_name: currentUserObj.displayName || 'Afford Member',
+                avatar_url: currentUserObj.avatarUrl || '',
+                bio: currentUserObj.bio || '',
+                is_private: false,
+                is_verified: false,
+                followers_count: 0,
+                following_count: 0,
+                updated_at: new Date().toISOString(),
+              });
             }
           } catch (syncErr) {
             console.warn('Profile sync on startup note:', syncErr);
@@ -815,7 +854,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (byId) {
         await supabase.from('profiles').update({
-          display_name: userObj.displayName || 'Praneeth',
+          display_name: userObj.displayName || 'Afford Member',
           avatar_url: userObj.avatarUrl || '',
           bio: userObj.bio || '',
           updated_at: new Date().toISOString(),
@@ -823,37 +862,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return userObj.id;
       }
 
-      const cleanUsername = userObj.username && userObj.username !== 'alex_rivera' && userObj.username !== 'member'
-        ? userObj.username
-        : 'praneeth';
-      const { data: byUsername } = await supabase
-        .from('profiles')
-        .select('id, username, display_name')
-        .eq('username', cleanUsername)
-        .maybeSingle();
-
-      if (byUsername) {
-        userObj.id = byUsername.id;
-        userObj.username = byUsername.username;
-        userObj.displayName = byUsername.display_name || userObj.displayName || 'Praneeth';
-        setUser({ ...userObj });
-        userRef.current = { ...userObj };
-        safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(userObj));
-        safeAsyncStorageSet('@afford_device_user_id', byUsername.id);
-        await supabase.from('profiles').update({
-          display_name: userObj.displayName || 'Praneeth',
-          avatar_url: userObj.avatarUrl || '',
-          bio: userObj.bio || '',
-          updated_at: new Date().toISOString(),
-        }).eq('id', byUsername.id);
-        return byUsername.id;
-      }
-
       const validId = isValidUUID(userObj.id) ? userObj.id : toValidUUID(userObj.id);
+      const cleanUsername = userObj.username && userObj.username !== 'alex_rivera' && userObj.username !== 'member' && userObj.username !== 'praneeth'
+        ? userObj.username
+        : `member_${validId.replace(/-/g, '').slice(0, 6)}`;
+
       const { error: insertErr } = await supabase.from('profiles').insert({
         id: validId,
         username: cleanUsername,
-        display_name: userObj.displayName || 'Praneeth',
+        display_name: userObj.displayName || 'Afford Member',
         avatar_url: userObj.avatarUrl || '',
         bio: userObj.bio || '',
         is_private: false,
@@ -865,7 +882,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await supabase.from('profiles').insert({
           id: validId,
           username: uniqueUsername,
-          display_name: userObj.displayName || 'Praneeth',
+          display_name: userObj.displayName || 'Afford Member',
           avatar_url: userObj.avatarUrl || '',
           bio: userObj.bio || '',
           is_private: false,
@@ -892,9 +909,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const mappedUsers: UserProfile[] = dbProfiles.map((p: any) => ({
           id: p.id,
           username: p.username || 'member',
-          displayName: p.display_name || p.username || 'Praneeth',
-          avatarUrl: p.avatar_url && !p.avatar_url.includes('534528741775') ? p.avatar_url : '',
-          bio: p.bio || '',
+          displayName: p.display_name || p.username || 'Afford Member',
+          avatarUrl: p.avatar_url && !p.avatar_url.includes('534528741775') && !p.avatar_url.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128')
+            ? p.avatar_url
+            : (p.username === 'praneeth' ? p.avatar_url : ''),
+          bio: (p.bio && !p.bio.includes('Capturing quiet moments & meaningful connections'))
+            ? p.bio
+            : (p.username === 'praneeth' ? p.bio : ''),
           isPrivate: p.is_private || false,
           missYouNotificationsEnabled: p.miss_you_notifications_enabled ?? true,
           streakNotificationsEnabled: p.streak_notifications_enabled ?? true,
@@ -1536,14 +1557,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ? userRef.current
               : (profileMap.get(p.user_id) || allUsersRef.current.find((u) => u.id === p.user_id) || {
                   id: p.user_id,
-                  username: 'praneeth',
-                  displayName: 'Praneeth',
+                  username: `member_${p.user_id.replace(/-/g, '').slice(0, 6)}`,
+                  displayName: 'Afford Member',
                   avatarUrl: '',
                   isVerified: false,
                 });
 
             const safeAuthorAvatar = (isMe && userRef.current?.avatarUrl) ? userRef.current.avatarUrl : (author.avatar_url || author.avatarUrl || '');
-            const finalAvatar = safeAuthorAvatar && !safeAuthorAvatar.includes('534528741775') ? safeAuthorAvatar : '';
+            const finalAvatar = safeAuthorAvatar && !safeAuthorAvatar.includes('534528741775') && !safeAuthorAvatar.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128')
+              ? safeAuthorAvatar
+              : (author.username === 'praneeth' ? safeAuthorAvatar : '');
 
             const existing = prev.find((item) => item.id === p.id);
             const isLiked = likedPostIdsRef.current.has(p.id) || (existing?.isLikedByMe ?? false);
@@ -1556,8 +1579,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               userId: p.user_id,
               user: {
                 id: p.user_id,
-                username: isMe ? (userRef.current?.username || 'praneeth') : (author.username || 'praneeth'),
-                displayName: isMe ? (userRef.current?.displayName || 'Praneeth') : (author.display_name || author.displayName || 'Praneeth'),
+                username: isMe ? (userRef.current?.username || 'member') : (author.username || 'member'),
+                displayName: isMe ? (userRef.current?.displayName || 'Afford Member') : (author.display_name || author.displayName || 'Afford Member'),
                 avatarUrl: finalAvatar,
                 isVerified: author.is_verified ?? author.isVerified ?? false,
               },
@@ -1626,19 +1649,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ? userRef.current
               : (profileMap.get(s.user_id) || allUsersRef.current.find((u) => u.id === s.user_id) || {
                   id: s.user_id,
-                  username: 'praneeth',
-                  displayName: 'Praneeth',
+                  username: `member_${s.user_id.replace(/-/g, '').slice(0, 6)}`,
+                  displayName: 'Afford Member',
                   avatarUrl: '',
                 });
             const safeAuthorAvatar = (isMe && userRef.current?.avatarUrl) ? userRef.current.avatarUrl : (author.avatar_url || author.avatarUrl || '');
-            const finalAvatar = safeAuthorAvatar && !safeAuthorAvatar.includes('534528741775') ? safeAuthorAvatar : '';
+            const finalAvatar = safeAuthorAvatar && !safeAuthorAvatar.includes('534528741775') && !safeAuthorAvatar.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128')
+              ? safeAuthorAvatar
+              : (author.username === 'praneeth' ? safeAuthorAvatar : '');
             map.set(s.id, {
               id: s.id,
               userId: s.user_id,
               user: {
                 id: s.user_id,
-                username: isMe ? (userRef.current?.username || 'praneeth') : (author.username || 'praneeth'),
-                displayName: isMe ? (userRef.current?.displayName || 'Praneeth') : (author.display_name || author.displayName || 'Praneeth'),
+                username: isMe ? (userRef.current?.username || 'member') : (author.username || 'member'),
+                displayName: isMe ? (userRef.current?.displayName || 'Afford Member') : (author.display_name || author.displayName || 'Afford Member'),
                 avatarUrl: finalAvatar,
               },
               mediaUrl: s.media_url,
@@ -1857,7 +1882,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               id: session.user.id,
               username: fallbackUsername,
               display_name: fallbackName,
-              avatar_url: CURRENT_USER.avatarUrl,
+              avatar_url: '',
             });
             const refetched = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
             profile = refetched.data;
@@ -1885,16 +1910,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Count query fallback
           }
 
+          const isNotPraneeth = (profile.username || '').toLowerCase() !== 'praneeth';
+          const safeAvatar = (profile.avatar_url && !profile.avatar_url.includes('534528741775') && !profile.avatar_url.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128'))
+            ? profile.avatar_url
+            : (!isNotPraneeth ? (profile.avatar_url || '') : '');
+          const safeBio = (profile.bio && !profile.bio.includes('Capturing quiet moments & meaningful connections'))
+            ? profile.bio
+            : (!isNotPraneeth ? (profile.bio || '') : '');
+
           const loadedUser: UserProfile = {
             id: profile.id,
             username: profile.username || 'user',
             displayName: profile.display_name || 'User',
-            avatarUrl: profile.avatar_url || CURRENT_USER.avatarUrl,
-            bio: profile.bio || '',
+            avatarUrl: safeAvatar || '',
+            bio: safeBio || '',
             isPrivate: profile.is_private || false,
             missYouNotificationsEnabled: profile.miss_you_notifications_enabled ?? true,
             streakNotificationsEnabled: profile.streak_notifications_enabled ?? true,
-            isVerified: profile.is_verified || false,
+            isVerified: isNotPraneeth ? false : (profile.is_verified || false),
             followersCount: profile.followers_count || 0,
             followingCount: profile.following_count || 0,
             missYouSentCount: liveSentCount,
@@ -2345,7 +2378,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const rawHandle = (email.split('@')[0] || 'member').toLowerCase().replace(/[^a-z0-9_]/g, '_');
     const demoName = rawHandle.charAt(0).toUpperCase() + rawHandle.slice(1);
     const demoUser: UserProfile = {
-      ...CURRENT_USER,
+      ...DEFAULT_BLANK_USER,
       id: toValidUUID(rawHandle),
       username: rawHandle,
       displayName: demoName,
@@ -2374,7 +2407,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             id: data.user.id,
             username,
             display_name: name,
-            avatar_url: CURRENT_USER.avatarUrl,
+            avatar_url: '',
+            bio: '',
+            is_verified: false,
             updated_at: new Date().toISOString(),
           });
         } catch {
@@ -2385,7 +2420,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: data.user.id,
           username,
           displayName: name,
-          avatarUrl: CURRENT_USER.avatarUrl,
+          avatarUrl: '',
           bio: '',
           isPrivate: false,
           missYouNotificationsEnabled: true,
@@ -2409,7 +2444,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Demo/Offline flow - register unique account and broadcast
     const cleanUsername = username.toLowerCase().replace(/[^a-z0-9_]/g, '_');
     const newUser: UserProfile = {
-      ...CURRENT_USER,
+      ...DEFAULT_BLANK_USER,
       id: toValidUUID(cleanUsername),
       username: cleanUsername,
       displayName: name,
@@ -2664,11 +2699,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('Post media upload failed: empty mediaUrl returned');
       throw new Error('Media upload failed. Please check your internet connection and try again.');
     }
+    const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
     const authorUsername = user.username && user.username !== 'alex_rivera' && user.username !== 'member'
       ? user.username
-      : (user.displayName && user.displayName !== 'Afford Member' ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : 'praneeth');
-    const authorDisplayName = user.displayName && user.displayName !== 'Afford Member' ? user.displayName : 'Praneeth';
-    const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
+      : (user.displayName ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : `user_${validUserId.replace(/-/g, '').slice(0, 6)}`);
+    const authorDisplayName = user.displayName || 'Afford Member';
 
     const newPost: Post = {
       id: `post_${Date.now()}_${Math.random().toString(36).substring(7)}`,
@@ -2776,8 +2811,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
     const authorUsername = user.username && user.username !== 'alex_rivera' && user.username !== 'member'
       ? user.username
-      : (user.displayName && user.displayName !== 'Afford Member' ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : 'praneeth');
-    const authorDisplayName = user.displayName && user.displayName !== 'Afford Member' ? user.displayName : 'Praneeth';
+      : (user.displayName ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : `user_${validUserId.replace(/-/g, '').slice(0, 6)}`);
+    const authorDisplayName = user.displayName || 'Afford Member';
 
     const newStory: Story = {
       id: `story_${Date.now()}_${Math.random().toString(36).substring(7)}`,

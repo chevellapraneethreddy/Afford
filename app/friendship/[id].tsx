@@ -177,7 +177,7 @@ export default function FriendshipProfileScreen() {
               ) : (
                 <View style={[styles.heroAvatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
                   <Text style={{ fontSize: 24, fontWeight: '800', color: colors.tint }}>
-                    {(user?.displayName || user?.username || 'P').charAt(0).toUpperCase()}
+                    {(user?.displayName || user?.username || 'U').charAt(0).toUpperCase()}
                   </Text>
                 </View>
               )}
