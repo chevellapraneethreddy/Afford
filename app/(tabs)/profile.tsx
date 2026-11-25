@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Image,
   Modal,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
@@ -49,6 +50,8 @@ export default function ProfileScreen() {
     signOut,
     updateProfile,
     updateAvatar,
+    refreshProfile,
+    refreshPosts,
     todayMissYouSentCount,
     todayMissYouReceivedCount,
     onThisDayMemories,
@@ -59,11 +62,34 @@ export default function ProfileScreen() {
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
   const [showCloseCircleModal, setShowCloseCircleModal] = useState(false);
   const [showVaultModal, setShowVaultModal] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Edit form state
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [bio, setBio] = useState(user?.bio || '');
   const [isPrivate, setIsPrivate] = useState(user?.isPrivate || false);
+
+  useEffect(() => {
+    refreshProfile?.();
+    refreshPosts?.();
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      setDisplayName(user.displayName || '');
+      setBio(user.bio || '');
+      setIsPrivate(user.isPrivate || false);
+    }
+  }, [user]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([refreshProfile?.(), refreshPosts?.()]);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const myPosts = posts.filter((p) => isValidSocialPost(p) && (p.userId === user?.id || p.user.id === user?.id));
 
@@ -126,7 +152,18 @@ export default function ProfileScreen() {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <AffordHeader />
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.container}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.tint}
+            colors={[colors.tint]}
+          />
+        }
+      >
         {/* Profile Card Header with Panoramic Aura */}
         <View style={[styles.profileHeader, { backgroundColor: colors.card, borderColor: colors.border }]}>
           {/* Panoramic Cover Accent */}

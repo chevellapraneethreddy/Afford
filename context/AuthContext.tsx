@@ -61,6 +61,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   updateAvatar: (avatarUri: string | null) => Promise<void>;
+  refreshProfile: () => Promise<void>;
   allUsers: UserProfile[];
   refreshUsers: () => Promise<void>;
   refreshPosts: () => Promise<void>;
@@ -2540,8 +2541,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (url) {
       url = await uploadMediaToSupabase(url, 'image');
     }
-    await updateProfile({ avatarUrl: url || undefined });
+    await updateProfile({ avatarUrl: url || '' });
   };
+
+  const refreshProfile = useCallback(async () => {
+    const current = userRef.current;
+    if (!current?.id) return;
+    const currentId = current.id;
+
+    if (isConfigured && isValidUUID(currentId)) {
+      try {
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', currentId)
+          .maybeSingle();
+
+        if (p) {
+          const isNotPraneeth = (p.username || '').toLowerCase() !== 'praneeth';
+          const safeAvatar = (p.avatar_url && !p.avatar_url.includes('534528741775') && !p.avatar_url.includes('avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128'))
+            ? p.avatar_url
+            : (!isNotPraneeth ? (p.avatar_url || '') : '');
+          const safeBio = (p.bio && !p.bio.includes('Capturing quiet moments & meaningful connections'))
+            ? p.bio
+            : (!isNotPraneeth ? (p.bio || '') : '');
+
+          if (isNotPraneeth && ((p.avatar_url && p.avatar_url !== safeAvatar) || (p.bio && p.bio !== safeBio) || p.is_verified)) {
+            await supabase.from('profiles').update({
+              avatar_url: safeAvatar,
+              bio: safeBio,
+              is_verified: false,
+              updated_at: new Date().toISOString(),
+            }).eq('id', currentId);
+          }
+
+          const updatedUser: UserProfile = {
+            id: p.id,
+            username: p.username || current.username || 'member',
+            displayName: p.display_name || current.displayName || 'Member',
+            avatarUrl: safeAvatar,
+            bio: safeBio,
+            isPrivate: p.is_private || false,
+            missYouNotificationsEnabled: p.miss_you_notifications_enabled ?? true,
+            streakNotificationsEnabled: p.streak_notifications_enabled ?? true,
+            isVerified: isNotPraneeth ? false : (p.is_verified || false),
+            followersCount: p.followers_count || 0,
+            followingCount: p.following_count || 0,
+            missYouSentCount: current.missYouSentCount || 0,
+            missYouReceivedCount: current.missYouReceivedCount || 0,
+            createdAt: p.created_at || current.createdAt,
+          };
+          setUser(updatedUser);
+          userRef.current = updatedUser;
+          await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+        }
+      } catch (err) {
+        console.warn('refreshProfile error:', err);
+      }
+    } else {
+      if (current) {
+        const isNotPraneeth = (current.username || '').toLowerCase() !== 'praneeth';
+        if (isNotPraneeth) {
+          const cleansed: UserProfile = {
+            ...current,
+            avatarUrl: (current.avatarUrl && (current.avatarUrl.includes('cd39eae8') || current.avatarUrl.includes('534528741775'))) ? '' : current.avatarUrl,
+            bio: (current.bio && current.bio.includes('Capturing quiet moments')) ? '' : current.bio,
+            isVerified: false,
+          };
+          setUser(cleansed);
+          userRef.current = cleansed;
+          await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(cleansed));
+        }
+      }
+    }
+  }, [isConfigured]);
 
   const startConversation = (targetUser: UserProfile): string => {
     if (!user) return `conv_${targetUser.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16)}`;
@@ -3518,6 +3591,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         updateProfile,
         updateAvatar,
+        refreshProfile,
         allUsers,
         refreshUsers: fetchAllProfiles,
         refreshPosts: fetchPosts,

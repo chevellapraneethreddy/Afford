@@ -276,3 +276,19 @@ DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.stories;
 EXCEPTION WHEN duplicate_object THEN null; WHEN undefined_object THEN null; END $$;
 
+-- 12. CLEANSE CORRUPTED MOCK PROFILE DATA FROM SUPABASE DATABASE
+-- Ensures existing users (like Ganny or new members) who inadvertently received creator photo/bio/badge are restored to clean initial profiles
+UPDATE public.profiles
+SET
+  avatar_url = '',
+  bio = '',
+  is_verified = false
+WHERE (username IS NULL OR LOWER(username) != 'praneeth')
+  AND (
+    avatar_url LIKE '%avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128%'
+    OR avatar_url LIKE '%534528741775%'
+    OR bio LIKE '%Capturing quiet moments & meaningful connections%'
+    OR is_verified = true
+  );
+
+
