@@ -15,12 +15,6 @@ import { useTheme } from '@/context/ThemeContext';
 
 const EMOTIONAL_TAGS = ['Grateful', '🌅 Nostalgic', '❤️ Warm', '☕ Peaceful', '😂 Smiling'];
 
-const FRIEND_AVATARS = [
-  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
-  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-];
-
 export const DailyPromptCard: React.FC = () => {
   const { colors, isDark } = useTheme();
   const { dailyPrompt, submitDailyPrompt, user } = useAuth();
@@ -63,25 +57,10 @@ export const DailyPromptCard: React.FC = () => {
           </Text>
         </View>
 
-        {/* Friend Avatars Stack */}
+        {/* Friend Reflections Badge */}
         <View style={styles.participantsBadge}>
-          <View style={styles.avatarStack}>
-            {FRIEND_AVATARS.map((uri, idx) => (
-              <Image
-                key={idx}
-                source={{ uri }}
-                style={[
-                  styles.stackAvatar,
-                  {
-                    marginLeft: idx > 0 ? -8 : 0,
-                    borderColor: colors.card,
-                  },
-                ]}
-              />
-            ))}
-          </View>
           <Text style={[styles.participantsText, { color: colors.textSecondary }]}>
-            {dailyPrompt.friendsResponsesCount} answered
+            {dailyPrompt.myResponse ? 'Answered today ✨' : 'Reflect with friends today'}
           </Text>
         </View>
       </View>

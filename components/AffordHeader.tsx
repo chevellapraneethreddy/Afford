@@ -17,10 +17,16 @@ import { InviteFriendsModal } from '@/components/InviteFriendsModal';
 
 export const AffordHeader: React.FC = () => {
   const { colors, isDark } = useTheme();
-  const { notifications, markNotificationsRead, user } = useAuth();
+  const { notifications, markNotificationsRead, user, conversations } = useAuth();
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [notifFilter, setNotifFilter] = useState<'all' | 'miss_you'>('all');
+
+  const streakDays = React.useMemo(() => {
+    if (!conversations || conversations.length === 0) return 1;
+    const maxVal = Math.max(0, ...conversations.map((c) => c.streakDays || 0));
+    return maxVal > 0 ? maxVal : 1;
+  }, [conversations]);
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
@@ -90,7 +96,7 @@ export const AffordHeader: React.FC = () => {
         >
           <Flame size={15} color="#F59E0B" fill="#F59E0B" />
           <Text style={[styles.streakText, { color: isDark ? '#FCD34D' : '#B45309' }]}>
-            42
+            {streakDays}
           </Text>
         </TouchableOpacity>
 

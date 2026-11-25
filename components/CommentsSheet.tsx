@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Image,
   KeyboardAvoidingView,
@@ -12,8 +12,9 @@ import {
   View,
 } from 'react-native';
 import { Send, X } from 'lucide-react-native';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, isValidUUID, toValidUUID } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { supabase } from '@/lib/supabase';
 import { PostComment } from '@/types';
 
 interface CommentsSheetProps {
@@ -22,36 +23,55 @@ interface CommentsSheetProps {
   onClose: () => void;
 }
 
-const SAMPLE_COMMENTS: Record<string, PostComment[]> = {
-  post_1: [
-    {
-      id: 'c1',
-      postId: 'post_1',
-      userId: 'usr_maya',
-      username: 'maya_chen',
-      displayName: 'Maya Chen',
-      avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400',
-      comment: 'Remember the hot cocoa we grabbed across the street? The best.',
-      createdAt: '1h ago',
-    },
-    {
-      id: 'c2',
-      postId: 'post_1',
-      userId: 'usr_sofia',
-      username: 'sofia_martinez',
-      displayName: 'Sofia Martinez',
-      avatarUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400',
-      comment: 'This warmth in your photos always makes me stop scrolling',
-      createdAt: '45m ago',
-    },
-  ],
-};
-
 export const CommentsSheet: React.FC<CommentsSheetProps> = ({ visible, postId, onClose }) => {
   const { colors, isDark } = useTheme();
   const { user, addPostComment } = useAuth();
   const [inputText, setInputText] = useState('');
-  const [localComments, setLocalComments] = useState<PostComment[]>(SAMPLE_COMMENTS[postId] || []);
+  const [localComments, setLocalComments] = useState<PostComment[]>([]);
+
+  useEffect(() => {
+    if (!visible || !postId) return;
+    let isCurrent = true;
+    (async () => {
+      try {
+        const validPostId = isValidUUID(postId) ? postId : toValidUUID(postId);
+        const { data, error } = await supabase
+          .from('post_comments')
+          .select('id, post_id, user_id, comment, created_at')
+          .eq('post_id', validPostId)
+          .order('created_at', { ascending: true });
+
+        if (!error && data && isCurrent) {
+          const userIds = Array.from(new Set(data.map((c: any) => c.user_id)));
+          const { data: profs } = await supabase
+            .from('profiles')
+            .select('id, username, display_name, avatar_url')
+            .in('id', userIds);
+
+          const profMap = new Map<string, any>();
+          (profs || []).forEach((p: any) => profMap.set(p.id, p));
+
+          const mapped: PostComment[] = data.map((c: any) => {
+            const author = profMap.get(c.user_id);
+            return {
+              id: c.id,
+              postId: c.post_id,
+              userId: c.user_id,
+              username: author?.username || 'member',
+              displayName: author?.display_name || author?.username || 'Afford Member',
+              avatarUrl: author?.avatar_url || '',
+              comment: c.comment,
+              createdAt: 'Recently',
+            };
+          });
+          setLocalComments(mapped);
+        }
+      } catch {}
+    })();
+    return () => {
+      isCurrent = false;
+    };
+  }, [visible, postId]);
 
   const handleSend = () => {
     if (!inputText.trim() || !user) return;
@@ -97,7 +117,15 @@ export const CommentsSheet: React.FC<CommentsSheetProps> = ({ visible, postId, o
             ) : (
               localComments.map((item) => (
                 <View key={item.id} style={styles.commentRow}>
-                  <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                  {item.avatarUrl ? (
+                    <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+                  ) : (
+                    <View style={[styles.avatar, { backgroundColor: colors.inputBackground, alignItems: 'center', justifyContent: 'center' }]}>
+                      <Text style={{ fontSize: 13, fontWeight: '700', color: colors.tint }}>
+                        {(item.displayName || 'U').charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
                   <View style={styles.commentBody}>
                     <View style={styles.commentMeta}>
                       <Text style={[styles.author, { color: colors.text }]}>{item.displayName}</Text>

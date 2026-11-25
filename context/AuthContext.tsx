@@ -200,6 +200,11 @@ export function isValidSocialPost(p: any): boolean {
   const caption = typeof p.caption === 'string' ? p.caption.trim() : '';
   if (!media || typeof media !== 'string') return false;
 
+  // Filter out local filesystem and content URIs so only hosted/CDN media renders across devices
+  if (media.startsWith('file:') || media.startsWith('content:')) {
+    return false;
+  }
+
   // Filter out corrupt payloads and placeholder domains
   if (
     media.includes('RmlsZSBub3QgZm91bmQ=') ||
@@ -224,9 +229,7 @@ export function isValidSocialPost(p: any): boolean {
 
 export function getDirectConversationId(userId1: string, userId2: string): string {
   const sorted = [userId1, userId2].sort();
-  const p1 = sorted[0].replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-  const p2 = sorted[1].replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
-  return `conv_${p1}_${p2}`;
+  return toValidUUID(`conv_${sorted[0]}_${sorted[1]}`);
 }
 
 export async function normalizeImageUri(uri: string, maxDim: number = 800, quality: number = 0.55): Promise<string> {
@@ -420,6 +423,7 @@ export async function uploadMediaToSupabase(
             apikey: supabaseKey,
             Authorization: `Bearer ${supabaseKey}`,
             'Content-Type': mimeType,
+            'x-upsert': 'true',
           },
         }
       );
@@ -441,12 +445,26 @@ export async function uploadMediaToSupabase(
       });
       if (base64Data && !base64Data.includes('RmlsZSBub3QgZm91bmQ=')) {
         const rawBytes = base64ToUint8Array(base64Data);
+        try {
+          const { data: sdkUpload, error: sdkErr } = await supabase.storage
+            .from('afford-media')
+            .upload(filePath, rawBytes, {
+              contentType: mimeType,
+              upsert: true,
+            });
+          if (!sdkErr && sdkUpload) {
+            console.log('[Native SDK Upload Success] Uploaded to Supabase CDN:', publicCdnUrl);
+            return publicCdnUrl;
+          }
+        } catch {}
+
         const res = await fetch(uploadEndpoint, {
           method: 'POST',
           headers: {
             apikey: supabaseKey,
             Authorization: `Bearer ${supabaseKey}`,
             'Content-Type': mimeType,
+            'x-upsert': 'true',
           },
           body: rawBytes as any,
         });
@@ -556,8 +574,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isConfigured, setIsConfigured] = useState<boolean>(isSupabaseConfigured());
 
-  // Application State
-  const [posts, setPosts] = useState<Post[]>(INITIAL_POSTS);
+  // Application State: clean by default so real registered users only see real data
+  const [posts, setPosts] = useState<Post[]>([]);
   const postsRef = useRef<Post[]>(posts);
   useEffect(() => {
     postsRef.current = posts;
@@ -567,26 +585,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     likedPostIdsRef.current = likedPostIds;
   }, [likedPostIds]);
-  const [stories, setStories] = useState<Story[]>(INITIAL_STORIES);
-  const [conversations, setConversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
-  const [messages, setMessages] = useState<Record<string, Message[]>>(INITIAL_MESSAGES);
-  const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
+  const [stories, setStories] = useState<Story[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<Record<string, Message[]>>({});
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [dailyPrompt, setDailyPrompt] = useState<DailyPrompt>(INITIAL_DAILY_PROMPT);
   const [followingIds, setFollowingIds] = useState<string[]>([]);
   const [missYouHistory, setMissYouHistory] = useState<MissYouEvent[]>([]);
-  const [onThisDayMemories, setOnThisDayMemories] = useState<OnThisDayMemory[]>(INITIAL_ON_THIS_DAY_MEMORIES);
-  const [connectionQuestions, setConnectionQuestions] = useState<ConnectionQuestion[]>(INITIAL_CONNECTION_QUESTIONS);
+  const [onThisDayMemories, setOnThisDayMemories] = useState<OnThisDayMemory[]>([]);
+  const [connectionQuestions, setConnectionQuestions] = useState<ConnectionQuestion[]>([]);
   const [milestoneCelebration, setMilestoneCelebration] = useState<{ milestone: FriendshipMilestone; friend: UserProfile } | null>(null);
 
-  // Initial all users pool: combining INITIAL_FRIENDS and DISCOVER_CREATORS (deduplicated)
-  const initialAllUsers: UserProfile[] = React.useMemo(() => {
-    const map = new Map<string, UserProfile>();
-    INITIAL_FRIENDS.forEach((u) => map.set(u.id, u));
-    DISCOVER_CREATORS.forEach((u) => map.set(u.id, u));
-    return Array.from(map.values());
-  }, []);
-
-  const [allUsers, setAllUsers] = useState<UserProfile[]>(initialAllUsers);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const allUsersRef = useRef<UserProfile[]>(allUsers);
   useEffect(() => {
     allUsersRef.current = allUsers;
@@ -793,41 +803,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         }
 
+        const mockUserIds = new Set(['usr_me_01', 'usr_maya', 'usr_elena', 'usr_marcus', 'usr_sofia', 'usr_lucas']);
+        const mockPostIds = new Set(['post_1', 'post_2', 'post_3', 'post_4', 'post_ancient_1', 'post_ancient_2']);
+        const mockConvIds = new Set(['conv_elena', 'conv_maya', 'conv_marcus', 'conv_sofia']);
+
         if (savedPosts) {
           try {
             const parsedPosts: Post[] = JSON.parse(savedPosts);
-            const validPosts = parsedPosts.filter(isValidSocialPost);
-            setPosts(validPosts.length > 0 ? validPosts : INITIAL_POSTS);
+            const validPosts = parsedPosts.filter((p) => isValidSocialPost(p) && !mockPostIds.has(p.id));
+            setPosts(validPosts);
           } catch {}
         }
-        if (savedStories) setStories(JSON.parse(savedStories));
-        if (savedConvs) setConversations(JSON.parse(savedConvs));
-        if (savedMsgs) setMessages(JSON.parse(savedMsgs));
-        if (savedNotifs) setNotifications(JSON.parse(savedNotifs));
+        if (savedStories) {
+          try {
+            const parsedStories: Story[] = JSON.parse(savedStories);
+            setStories(parsedStories.filter((s) => !mockUserIds.has(s.userId || s.user?.id || '')));
+          } catch {}
+        }
+        if (savedConvs) {
+          try {
+            const parsedConvs: Conversation[] = JSON.parse(savedConvs);
+            setConversations(parsedConvs.filter((c) => !mockConvIds.has(c.id) && !mockUserIds.has(c.otherUser?.id || '')));
+          } catch {}
+        }
+        if (savedMsgs) {
+          try {
+            const parsedMsgs: Record<string, Message[]> = JSON.parse(savedMsgs);
+            const cleanedMsgs: Record<string, Message[]> = {};
+            for (const [k, v] of Object.entries(parsedMsgs)) {
+              if (!mockConvIds.has(k)) {
+                cleanedMsgs[k] = v;
+              }
+            }
+            setMessages(cleanedMsgs);
+          } catch {}
+        }
+        if (savedNotifs) {
+          try {
+            const parsedNotifs: NotificationItem[] = JSON.parse(savedNotifs);
+            setNotifications(parsedNotifs.filter((n) => !mockUserIds.has(n.actor?.id || '')));
+          } catch {}
+        }
         if (savedPrompt) setDailyPrompt(JSON.parse(savedPrompt));
         if (savedHistory) setMissYouHistory(JSON.parse(savedHistory));
         if (savedQuestions) setConnectionQuestions(JSON.parse(savedQuestions));
         if (savedFollowing) {
           try {
-            setFollowingIds(JSON.parse(savedFollowing));
+            const parsedFollowing: string[] = JSON.parse(savedFollowing);
+            setFollowingIds(parsedFollowing.filter((id) => !mockUserIds.has(id)));
           } catch {}
         }
 
-        // Synchronize allUsers with initial mock creators, saved users, and current user
-        setAllUsers((prev) => {
+        // Synchronize allUsers with saved real users and current user
+        setAllUsers(() => {
           const map = new Map<string, UserProfile>();
-          initialAllUsers.forEach((u) => {
-            if (u.id !== 'usr_me_01') map.set(u.id, u);
-          });
           if (savedUsers) {
             try {
               const parsed: UserProfile[] = JSON.parse(savedUsers);
               parsed.forEach((u) => {
-                if (u.id !== 'usr_me_01') map.set(u.id, u);
+                if (!mockUserIds.has(u.id)) map.set(u.id, u);
               });
             } catch {}
           }
-          if (currentUserObj && currentUserObj.displayName) {
+          if (currentUserObj && currentUserObj.id && !mockUserIds.has(currentUserObj.id)) {
             map.set(currentUserObj.id, currentUserObj);
           }
           return Array.from(map.values());
@@ -928,12 +966,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: p.created_at,
         }));
 
-        setAllUsers((prev) => {
+        const mockUserIds = new Set(['usr_me_01', 'usr_maya', 'usr_elena', 'usr_marcus', 'usr_sofia', 'usr_lucas', 'usr_chloe', 'usr_david']);
+        const validDbProfiles = mappedUsers.filter((u) => !mockUserIds.has(u.id));
+
+        setAllUsers(() => {
           const map = new Map<string, UserProfile>();
-          // Existing initial / local entries
-          prev.forEach((u) => map.set(u.id, u));
-          // Database profiles overwrite or insert
-          mappedUsers.forEach((u) => map.set(u.id, u));
+          validDbProfiles.forEach((u) => map.set(u.id, u));
+          if (userRef.current && userRef.current.id && !mockUserIds.has(userRef.current.id)) {
+            map.set(userRef.current.id, userRef.current);
+          }
           const merged = Array.from(map.values());
           safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(merged));
           return merged;
@@ -1470,7 +1511,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           for (const m of dbMsgs) {
             const cId = m.conversation_id;
-            const otherId = m.sender_id === myId ? m.recipient_id : m.sender_id;
+            const isSentByMe = m.sender_id === myId || m.sender_id === validMyId;
+            const otherId = isSentByMe ? m.recipient_id : m.sender_id;
             const existing = map.get(cId);
 
             if (!existing) {
@@ -1534,7 +1576,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .select('id, username, display_name, avatar_url, is_verified'),
       ]);
 
-      if (!error && dbPosts && dbPosts.length > 0) {
+      if (!error && dbPosts) {
         const profileMap = new Map<string, any>();
         if (dbProfiles) {
           dbProfiles.forEach((prof: any) => profileMap.set(prof.id, prof));
@@ -1542,7 +1584,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setPosts((prev) => {
           const map = new Map<string, Post>();
-          prev.forEach((p) => map.set(p.id, p));
+          const now = Date.now();
+          // Keep only current user's optimistic posts created within the last 30s
+          prev.forEach((p) => {
+            if (p.userId === userRef.current?.id && (now - new Date(p.createdAt).getTime() < 30000)) {
+              map.set(p.id, p);
+            }
+          });
 
           dbPosts.forEach((p: any) => {
             if (!isValidSocialPost(p)) {
@@ -1627,7 +1675,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .select('id, username, display_name, avatar_url, is_verified'),
       ]);
 
-      if (!error && dbStories && dbStories.length > 0) {
+      if (!error && dbStories) {
         const profileMap = new Map<string, any>();
         if (dbProfiles) {
           dbProfiles.forEach((prof: any) => profileMap.set(prof.id, prof));
@@ -1635,7 +1683,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setStories((prev) => {
           const map = new Map<string, Story>();
-          prev.forEach((s) => map.set(s.id, s));
+          const now = Date.now();
+          prev.forEach((s) => {
+            if (s.userId === userRef.current?.id && (now - new Date(s.createdAt).getTime() < 30000)) {
+              map.set(s.id, s);
+            }
+          });
           dbStories.forEach((s: any) => {
             if (!s.media_url || s.media_url.includes('RmlsZSBub3QgZm91bmQ=') || s.media_url.includes('File not found')) {
               return;
@@ -2740,6 +2793,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }).then(() => {});
       } catch {}
     }
+
+    if (isConfigured && user) {
+      (async () => {
+        try {
+          const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
+          const validPostId = isValidUUID(postId) ? postId : toValidUUID(postId);
+
+          if (nextIsLiked) {
+            await supabase.from('post_likes').upsert({
+              post_id: validPostId,
+              user_id: validUserId,
+            });
+            await supabase.from('posts').update({ likes_count: nextCount }).eq('id', validPostId);
+          } else {
+            await supabase.from('post_likes').delete().match({
+              post_id: validPostId,
+              user_id: validUserId,
+            });
+            await supabase.from('posts').update({ likes_count: nextCount }).eq('id', validPostId);
+          }
+        } catch (e) {
+          console.warn('Failed to sync like with Supabase:', e);
+        }
+      })();
+    }
   };
 
   const addPostComment = (postId: string, comment: string) => {
@@ -2757,6 +2835,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(updated));
       return updated;
     });
+
+    if (isConfigured && user) {
+      (async () => {
+        try {
+          const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
+          const validPostId = isValidUUID(postId) ? postId : toValidUUID(postId);
+          await supabase.from('post_comments').insert({
+            post_id: validPostId,
+            user_id: validUserId,
+            comment: comment.trim(),
+          });
+          const targetPost = posts.find((p) => p.id === postId);
+          const updatedCount = (targetPost?.commentsCount || 0) + 1;
+          await supabase.from('posts').update({ comments_count: updatedCount }).eq('id', validPostId);
+        } catch (e) {
+          console.warn('Failed to sync comment with Supabase:', e);
+        }
+      })();
+    }
   };
 
   const createPost = async (

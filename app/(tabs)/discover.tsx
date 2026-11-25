@@ -19,7 +19,6 @@ import { AffordHeader } from '@/components/AffordHeader';
 import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import { DISCOVER_CREATORS, SHORT_VIDEOS } from '../../lib/mockData';
 import { UserProfile } from '@/types';
 
 const DISCOVERY_TOPICS = [
@@ -136,6 +135,10 @@ export default function DiscoverScreen() {
       return cap.includes(cleanSearchTerm) || dName.includes(cleanSearchTerm) || uName.includes(cleanSearchTerm);
     });
   }, [isSearching, cleanSearchTerm, posts]);
+
+  const videoMoments = useMemo(() => {
+    return (posts || []).filter((p) => p.mediaType === 'video' && p.mediaUrl);
+  }, [posts]);
 
   const renderCreatorCard = (creator: UserProfile) => {
     const isFollowing = followingIds.includes(creator.id);
@@ -433,30 +436,66 @@ export default function DiscoverScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.reelsRow}
             >
-              {SHORT_VIDEOS.map((video) => (
-                <TouchableOpacity
-                  key={video.id}
-                  activeOpacity={0.88}
-                  onPress={() => router.push('/reels')}
-                  style={styles.reelCard}
-                >
-                  <Image source={{ uri: video.thumbnailUrl }} style={styles.reelThumbnail} />
-                  <LinearGradient
-                    colors={['transparent', 'rgba(0,0,0,0.85)']}
-                    style={styles.reelGradientOverlay}
+              {videoMoments.length > 0 ? (
+                videoMoments.map((video) => (
+                  <TouchableOpacity
+                    key={video.id}
+                    activeOpacity={0.88}
+                    onPress={() => router.push('/reels')}
+                    style={styles.reelCard}
                   >
-                    <View style={styles.playIconCircle}>
-                      <Play size={13} color="#FFFFFF" fill="#FFFFFF" />
-                    </View>
-                    <Text style={styles.reelCaption} numberOfLines={2}>
-                      {video.caption}
-                    </Text>
-                    <Text style={styles.reelAuthor}>
-                      @{video.creator.username}
-                    </Text>
+                    <LinearGradient
+                      colors={['#1E1B4B', '#0F172A']}
+                      style={[styles.reelThumbnail, { alignItems: 'center', justifyContent: 'center' }]}
+                    >
+                      <Play size={24} color="#FFFFFF" fill="#FFFFFF" />
+                    </LinearGradient>
+                    <LinearGradient
+                      colors={['transparent', 'rgba(0,0,0,0.85)']}
+                      style={styles.reelGradientOverlay}
+                    >
+                      <View style={styles.playIconCircle}>
+                        <Play size={13} color="#FFFFFF" fill="#FFFFFF" />
+                      </View>
+                      <Text style={styles.reelCaption} numberOfLines={2}>
+                        {video.caption || 'Moment'}
+                      </Text>
+                      <Text style={styles.reelAuthor}>
+                        @{video.user?.username || 'member'}
+                      </Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ))
+              ) : (
+                <TouchableOpacity
+                  activeOpacity={0.88}
+                  onPress={() => router.push('/(tabs)/create')}
+                  style={[
+                    styles.reelCard,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                      borderWidth: 1,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 14,
+                    },
+                  ]}
+                >
+                  <LinearGradient
+                    colors={BrandColors.coralGradient}
+                    style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}
+                  >
+                    <Play size={20} color="#FFFFFF" fill="#FFFFFF" />
                   </LinearGradient>
+                  <Text style={{ fontSize: 13, fontWeight: '700', textAlign: 'center', color: colors.text, marginBottom: 4 }}>
+                    Share a Video
+                  </Text>
+                  <Text style={{ fontSize: 11, textAlign: 'center', color: colors.textSecondary }}>
+                    Tap + to post a video moment
+                  </Text>
                 </TouchableOpacity>
-              ))}
+              )}
             </ScrollView>
 
             {/* Suggested Creators / Friends Section */}

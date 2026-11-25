@@ -25,7 +25,7 @@ import { Post } from '@/types';
 type FeedFilter = 'all' | 'close_circle' | 'favorites';
 
 const FEED_VIEWABILITY_CONFIG = {
-  itemVisiblePercentThreshold: 60,
+  itemVisiblePercentThreshold: 40,
 };
 
 export default function HomeScreen() {
@@ -123,7 +123,7 @@ export default function HomeScreen() {
         <View style={[styles.connectionStreakBadge, { backgroundColor: isDark ? 'rgba(245, 158, 11, 0.12)' : '#FEF3C7', borderColor: 'rgba(245, 158, 11, 0.3)' }]}>
           <Flame size={14} color="#F59E0B" fill="#F59E0B" />
           <Text style={[styles.streakBadgeText, { color: isDark ? '#FCD34D' : '#B45309' }]}>
-            42 Day Bond
+            Daily Bond
           </Text>
         </View>
       </View>
@@ -134,9 +134,9 @@ export default function HomeScreen() {
       {/* Daily Connection Prompt */}
       <DailyPromptCard />
 
-      {/* On This Day Nostalgic Memory */}
-      {onThisDayMemories && onThisDayMemories.length > 0 && (
-        <OnThisDayCard memory={onThisDayMemories[0]} />
+      {/* On This Day Nostalgic Memory: only displayed when the current user has authentic past memories */}
+      {onThisDayMemories && onThisDayMemories.length > 0 && user?.id && onThisDayMemories.some((m) => m.user?.id === user.id) && (
+        <OnThisDayCard memory={onThisDayMemories.find((m) => m.user?.id === user.id)!} />
       )}
 
       {/* Feed Filter Pills & Title */}
@@ -194,11 +194,8 @@ export default function HomeScreen() {
   );
 
   const renderItem = useCallback(
-    ({ item, index }: { item: Post; index: number }) => {
-      const isItemVisible = isFocused && (
-        visiblePostId === item.id ||
-        (!visiblePostId && index === 0)
-      );
+    ({ item }: { item: Post }) => {
+      const isItemVisible = isFocused && visiblePostId === item.id;
       return (
         <View style={styles.postWrapper}>
           <PostCard post={item} isVisible={isItemVisible} />

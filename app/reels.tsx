@@ -15,10 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { ArrowLeft, Heart, MessageCircle, Music, Send, ShieldCheck, UserCheck, UserPlus, Volume2, VolumeX } from 'lucide-react-native';
+import { ArrowLeft, Heart, MessageCircle, Music, Send, ShieldCheck, UserCheck, UserPlus, Video, Volume2, VolumeX } from 'lucide-react-native';
 import { BrandColors } from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
-import { SHORT_VIDEOS } from '@/lib/mockData';
 
 interface ViewableItemInfo {
   item: any;
@@ -72,10 +71,32 @@ export default function ReelsScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const reelWidth = Platform.OS === 'web' ? Math.min(windowWidth, 600) : windowWidth;
   const reelHeight = windowHeight;
-  const { followingIds, toggleFollow } = useAuth();
+  const { followingIds, toggleFollow, posts, toggleLikePost } = useAuth();
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [likedMap, setLikedMap] = useState<Record<string, boolean>>({});
+
+  const reelItems = React.useMemo(() => {
+    return (posts || [])
+      .filter((p) => p.mediaType === 'video' && p.mediaUrl)
+      .map((p) => ({
+        id: p.id,
+        videoUrl: p.mediaUrl,
+        thumbnailUrl: p.mediaUrl,
+        caption: p.caption || '',
+        likesCount: p.likesCount,
+        commentsCount: p.commentsCount,
+        sharesCount: p.sharesCount,
+        musicTrack: `Original Audio · ${p.user?.displayName || 'Member'}`,
+        creator: {
+          id: p.user?.id || p.userId,
+          username: p.user?.username || 'member',
+          displayName: p.user?.displayName || 'Afford Member',
+          avatarUrl: p.user?.avatarUrl || '',
+          isVerified: p.user?.isVerified || false,
+        },
+      }));
+  }, [posts]);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<any> }) => {
     if (viewableItems && viewableItems.length > 0 && typeof viewableItems[0].index === 'number') {
@@ -92,6 +113,7 @@ export default function ReelsScreen() {
       ...prev,
       [reelId]: !prev[reelId],
     }));
+    toggleLikePost(reelId);
   };
 
   const handleShare = async (caption: string) => {
@@ -104,7 +126,7 @@ export default function ReelsScreen() {
     }
   };
 
-  const renderItem = ({ item, index }: { item: typeof SHORT_VIDEOS[0]; index: number }) => {
+  const renderItem = ({ item, index }: { item: any; index: number }) => {
     const isPlaying = index === activeVideoIndex;
     const isLiked = Boolean(likedMap[item.id]);
     const isFollowing = followingIds.includes(item.creator.id);
@@ -203,19 +225,46 @@ export default function ReelsScreen() {
         <View style={{ width: 24 }} />
       </SafeAreaView>
 
-      <FlatList
-        data={SHORT_VIDEOS}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        pagingEnabled
-        showsVerticalScrollIndicator={false}
-        snapToInterval={reelHeight}
-        snapToAlignment="start"
-        decelerationRate="fast"
-        contentContainerStyle={Platform.OS === 'web' ? { alignItems: 'center' } : undefined}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-      />
+      {reelItems.length === 0 ? (
+        <View style={[styles.emptyContainer, { width: reelWidth, height: reelHeight }]}>
+          <LinearGradient
+            colors={BrandColors.coralGradient}
+            style={styles.emptyIconCircle}
+          >
+            <Video size={36} color="#FFFFFF" />
+          </LinearGradient>
+          <Text style={styles.emptyTitle}>No Moments Yet</Text>
+          <Text style={styles.emptySubtitle}>
+            Be the first to share an authentic video moment with friends.
+          </Text>
+          <TouchableOpacity
+            style={styles.createReelBtn}
+            onPress={() => router.push('/(tabs)/create')}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={BrandColors.primaryGradient}
+              style={styles.createReelGradient}
+            >
+              <Text style={styles.createReelText}>+ Create Video Moment</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={reelItems}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          snapToInterval={reelHeight}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          contentContainerStyle={Platform.OS === 'web' ? { alignItems: 'center' } : undefined}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+        />
+      )}
     </View>
   );
 }
@@ -341,5 +390,47 @@ const styles = StyleSheet.create({
   audioText: {
     color: '#FFFFFF',
     fontSize: 11,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#0A0C14',
+  },
+  emptyIconCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  createReelBtn: {
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
+  createReelGradient: {
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createReelText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

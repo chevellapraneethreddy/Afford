@@ -27,11 +27,16 @@ import { Post } from '@/types';
 import { CommentsSheet } from './CommentsSheet';
 
 const NativePostVideo: React.FC<{ uri: string; isVisible?: boolean }> = ({ uri, isVisible = true }) => {
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
-    p.muted = false;
+    p.muted = true;
     p.volume = 1.0;
+    if (isVisible) {
+      p.play();
+    } else {
+      p.pause();
+    }
   });
 
   useEffect(() => {
@@ -40,6 +45,7 @@ const NativePostVideo: React.FC<{ uri: string; isVisible?: boolean }> = ({ uri, 
       player.play();
     } else {
       player.pause();
+      player.muted = true;
     }
   }, [player, isVisible]);
 
@@ -47,6 +53,9 @@ const NativePostVideo: React.FC<{ uri: string; isVisible?: boolean }> = ({ uri, 
     return () => {
       try {
         player?.pause();
+        if (player) {
+          player.muted = true;
+        }
       } catch {}
     };
   }, [player]);
