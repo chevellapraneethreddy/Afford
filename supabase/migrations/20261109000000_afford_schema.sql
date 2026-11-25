@@ -494,9 +494,15 @@ CREATE POLICY "Public can view afford-media"
   USING (bucket_id = 'afford-media');
 
 DROP POLICY IF EXISTS "Authenticated users can upload afford-media" ON storage.objects;
-CREATE POLICY "Authenticated users can upload afford-media"
+DROP POLICY IF EXISTS "Public can upload afford-media" ON storage.objects;
+CREATE POLICY "Public can upload afford-media"
   ON storage.objects FOR INSERT
-  WITH CHECK (bucket_id = 'afford-media' AND auth.role() = 'authenticated');
+  WITH CHECK (bucket_id = 'afford-media');
+
+DROP POLICY IF EXISTS "Public can update afford-media" ON storage.objects;
+CREATE POLICY "Public can update afford-media"
+  ON storage.objects FOR UPDATE
+  USING (bucket_id = 'afford-media');
 
 -- REALTIME PUBLICATION SETUP
 DO $$ BEGIN
@@ -504,6 +510,9 @@ DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.miss_you_events;
   ALTER PUBLICATION supabase_realtime ADD TABLE public.notifications;
   ALTER PUBLICATION supabase_realtime ADD TABLE public.streaks;
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.posts;
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.stories;
 EXCEPTION
   WHEN undefined_object THEN null;
 END $$;

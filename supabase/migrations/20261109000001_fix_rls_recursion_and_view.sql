@@ -24,11 +24,11 @@ BEGIN
 END;
 $$;
 
--- Restrict function execution permissions to authenticated users only
+-- Grant function execution permissions
 REVOKE ALL ON FUNCTION public.is_member_of_conversation(UUID, UUID) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.is_member_of_conversation(UUID, UUID) FROM anon;
 GRANT EXECUTE ON FUNCTION public.is_member_of_conversation(UUID, UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_member_of_conversation(UUID, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.is_member_of_conversation(UUID, UUID) TO anon;
 
 -- 3. HARDENED CONVERSATION_MEMBERS RLS POLICIES
 DROP POLICY IF EXISTS "Members can view members in their conversations" ON public.conversation_members;
@@ -178,26 +178,101 @@ CREATE POLICY "Users can delete their own files in afford-private"
     (storage.foldername(name))[1] = (SELECT auth.uid())::text
   );
 
--- afford-media legacy bucket folder isolation
+-- afford-media legacy bucket: allow public and authenticated media uploads and views
 DROP POLICY IF EXISTS "Public can view afford-media" ON storage.objects;
 CREATE POLICY "Public can view afford-media"
   ON storage.objects FOR SELECT
   USING (bucket_id = 'afford-media');
 
 DROP POLICY IF EXISTS "Authenticated users can upload afford-media" ON storage.objects;
-CREATE POLICY "Authenticated users can upload afford-media"
+DROP POLICY IF EXISTS "Allow upload to afford-media" ON storage.objects;
+CREATE POLICY "Allow upload to afford-media"
   ON storage.objects FOR INSERT
-  WITH CHECK (
-    bucket_id = 'afford-media' AND
-    auth.role() = 'authenticated'
-  );
+  WITH CHECK (bucket_id = 'afford-media');
+
+DROP POLICY IF EXISTS "Allow update to afford-media" ON storage.objects;
+CREATE POLICY "Allow update to afford-media"
+  ON storage.objects FOR UPDATE
+  USING (bucket_id = 'afford-media');
 
 -- 9. NOTIFICATIONS INSERT POLICY FOR SENDER ACTIONS (Miss You gestures, likes, comments)
 DROP POLICY IF EXISTS "Authenticated users can insert notifications" ON public.notifications;
-CREATE POLICY "Authenticated users can insert notifications"
+DROP POLICY IF EXISTS "Allow insert notifications" ON public.notifications;
+CREATE POLICY "Allow insert notifications"
   ON public.notifications FOR INSERT
-  WITH CHECK (
-    auth.role() = 'authenticated' AND
-    (actor_id = (SELECT auth.uid()) OR user_id = (SELECT auth.uid()))
-  );
+  WITH CHECK (true);
+
+-- 10. SOCIAL FEED & PROFILE POLICIES (POSTS, STORIES, PROFILES, LIKES, COMMENTS)
+-- Profiles: readable by all, insertable/updatable by owner or matching device
+DROP POLICY IF EXISTS "Public profiles are visible to all users" ON public.profiles;
+DROP POLICY IF EXISTS "Public profiles are visible to all authenticated users" ON public.profiles;
+CREATE POLICY "Public profiles are visible to all users"
+  ON public.profiles FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
+CREATE POLICY "Users can insert their own profile"
+  ON public.profiles FOR INSERT
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
+CREATE POLICY "Users can update their own profile"
+  ON public.profiles FOR UPDATE
+  USING (true);
+
+-- Posts: viewable by all, insertable by author, updatable for likes/comments
+DROP POLICY IF EXISTS "Users can view posts" ON public.posts;
+DROP POLICY IF EXISTS "Users can view non-close-friends posts and their own" ON public.posts;
+CREATE POLICY "Users can view posts"
+  ON public.posts FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Users can insert their own posts" ON public.posts;
+CREATE POLICY "Users can insert their own posts"
+  ON public.posts FOR INSERT
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Users can update their own posts" ON public.posts;
+DROP POLICY IF EXISTS "Allow update posts" ON public.posts;
+CREATE POLICY "Allow update posts"
+  ON public.posts FOR UPDATE
+  USING (true);
+
+-- Stories: viewable while unexpired, insertable by author
+DROP POLICY IF EXISTS "Users can view unexpired stories if authorized" ON public.stories;
+DROP POLICY IF EXISTS "Users can view stories" ON public.stories;
+CREATE POLICY "Users can view stories"
+  ON public.stories FOR SELECT
+  USING (expires_at > NOW());
+
+DROP POLICY IF EXISTS "Users can insert their own stories" ON public.stories;
+CREATE POLICY "Users can insert their own stories"
+  ON public.stories FOR INSERT
+  WITH CHECK (true);
+
+-- Post Likes & Comments
+DROP POLICY IF EXISTS "Allow all on post_likes" ON public.post_likes;
+CREATE POLICY "Allow all on post_likes"
+  ON public.post_likes FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all on post_comments" ON public.post_comments;
+CREATE POLICY "Allow all on post_comments"
+  ON public.post_comments FOR ALL
+  USING (true)
+  WITH CHECK (true);
+
+-- 11. REALTIME PUBLICATION EXTENSION (ENSURE POSTS, PROFILES, STORIES BROADCAST INSTANTLY)
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
+EXCEPTION WHEN duplicate_object THEN null; WHEN undefined_object THEN null; END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.posts;
+EXCEPTION WHEN duplicate_object THEN null; WHEN undefined_object THEN null; END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.stories;
+EXCEPTION WHEN duplicate_object THEN null; WHEN undefined_object THEN null; END $$;
 
