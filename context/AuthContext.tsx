@@ -192,6 +192,34 @@ export function toValidUUID(idOrString: string): string {
   return `${p1.slice(0, 8)}-${p2.slice(0, 4)}-4${p2.slice(4, 7)}-a${p3.slice(0, 3)}-${p4.slice(0, 12)}`;
 }
 
+export function isValidSocialPost(p: any): boolean {
+  if (!p) return false;
+  const media = p.mediaUrl || p.media_url;
+  const caption = typeof p.caption === 'string' ? p.caption.trim() : '';
+  if (!media || typeof media !== 'string') return false;
+
+  // Filter out corrupt payloads and placeholder domains
+  if (
+    media.includes('RmlsZSBub3QgZm91bmQ=') ||
+    media.includes('File not found') ||
+    media.includes('example.com') ||
+    media.includes('placeholder.supabase.co')
+  ) {
+    return false;
+  }
+
+  // Filter out any test / foreign key dummy artifacts
+  if (
+    /foreign\s*key/i.test(caption) ||
+    /test/i.test(caption) ||
+    caption === 't'
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export function getDirectConversationId(userId1: string, userId2: string): string {
   const sorted = [userId1, userId2].sort();
   const p1 = sorted[0].replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
@@ -669,11 +697,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (savedPosts) {
           try {
             const parsedPosts: Post[] = JSON.parse(savedPosts);
-            setPosts(parsedPosts);
+            const validPosts = parsedPosts.filter(isValidSocialPost);
+            setPosts(validPosts.length > 0 ? validPosts : INITIAL_POSTS);
+            safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(validPosts));
 
             // Auto-heal local images to portable base64 and sync unsynced posts to Supabase
             (async () => {
-              for (const p of parsedPosts) {
+              for (const p of validPosts) {
+                if (!isValidSocialPost(p)) continue;
                 let currentMedia = p.mediaUrl;
                 if (currentMedia && (currentMedia.startsWith('file:') || currentMedia.startsWith('content:'))) {
                   const portableMedia = await normalizeImageUri(currentMedia, 800, 0.5);
@@ -689,7 +720,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
 
                 // If current user's post is not yet in Supabase, insert it
-                if (isConfigured && currentUserObj && (p.userId === currentUserObj.id || p.user?.id === currentUserObj.id || p.user?.displayName === currentUserObj.displayName)) {
+                if (isConfigured && currentUserObj && isValidSocialPost(p) && (p.userId === currentUserObj.id || p.user?.id === currentUserObj.id || p.user?.displayName === currentUserObj.displayName)) {
                   try {
                     const validAuthorId = isValidUUID(currentUserObj.id) ? currentUserObj.id : toValidUUID(currentUserObj.id);
                     const { data: existing } = await supabase
@@ -1463,7 +1494,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           prev.forEach((p) => map.set(p.id, p));
 
           dbPosts.forEach((p: any) => {
-            if (!p.media_url || p.media_url.includes('RmlsZSBub3QgZm91bmQ=') || p.media_url.includes('File not found')) {
+            if (!isValidSocialPost(p)) {
               return;
             }
             if (p.media_url.startsWith('file:') || p.media_url.startsWith('content:')) {
@@ -2048,7 +2079,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
       .on('broadcast', { event: 'NEW_POST' }, (payload: any) => {
         const p = payload?.payload?.post;
-        if (p && p.mediaUrl && !p.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=')) {
+        if (p && isValidSocialPost(p)) {
           if (p.mediaUrl.startsWith('file:') || p.mediaUrl.startsWith('content:')) {
             if (Platform.OS === 'web' || (userRef.current && p.userId !== userRef.current.id)) {
               return;

@@ -18,7 +18,7 @@ import { OnThisDayCard } from '@/components/OnThisDayCard';
 import { PostCard } from '@/components/PostCard';
 import { StoryCarousel } from '@/components/StoryCarousel';
 import { WelcomeOnboardingModal } from '@/components/WelcomeOnboardingModal';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, isValidSocialPost } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { Post } from '@/types';
 
@@ -89,7 +89,7 @@ export default function HomeScreen() {
   };
 
   const filteredPosts = posts.filter((p) => {
-    if (!p.mediaUrl || p.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') || p.mediaUrl.includes('File not found')) {
+    if (!isValidSocialPost(p)) {
       return false;
     }
     if (p.mediaUrl.startsWith('file:') || p.mediaUrl.startsWith('content:')) {

@@ -38,7 +38,7 @@ import { CloseCircleModal } from '@/components/CloseCircleModal';
 import { MemoryVaultModal } from '@/components/MemoryVaultModal';
 import { OnThisDayCard } from '@/components/OnThisDayCard';
 import { BrandColors } from '@/constants/Colors';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, isValidSocialPost } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 
 export default function ProfileScreen() {
@@ -65,7 +65,7 @@ export default function ProfileScreen() {
   const [bio, setBio] = useState(user?.bio || '');
   const [isPrivate, setIsPrivate] = useState(user?.isPrivate || false);
 
-  const myPosts = posts.filter((p) => p.userId === user?.id || p.user.id === user?.id);
+  const myPosts = posts.filter((p) => isValidSocialPost(p) && (p.userId === user?.id || p.user.id === user?.id));
 
   const handlePickImage = async () => {
     setShowPhotoOptions(false);

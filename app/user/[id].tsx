@@ -26,7 +26,7 @@ import {
   Video as VideoIcon,
 } from 'lucide-react-native';
 import { BrandColors } from '@/constants/Colors';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, isValidSocialPost } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { Post, UserProfile } from '@/types';
@@ -238,7 +238,7 @@ export default function UserProfileScreen() {
     const map = new Map<string, Post>();
     posts
       .filter((p) => {
-        if (!p.mediaUrl || p.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') || p.mediaUrl.includes('File not found')) {
+        if (!isValidSocialPost(p)) {
           return false;
         }
         if (p.mediaUrl.startsWith('file:') || p.mediaUrl.startsWith('content:')) {
@@ -257,7 +257,7 @@ export default function UserProfileScreen() {
 
     fetchedPosts
       .filter((p) => {
-        if (!p.mediaUrl || p.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') || p.mediaUrl.includes('File not found')) {
+        if (!isValidSocialPost(p)) {
           return false;
         }
         if (p.mediaUrl.startsWith('file:') || p.mediaUrl.startsWith('content:')) {
