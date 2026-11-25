@@ -11,6 +11,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.afford.social",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#12141F",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
