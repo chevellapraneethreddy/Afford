@@ -93,6 +93,67 @@ const STORAGE_KEYS = {
   ALL_USERS: '@afford_all_users',
 };
 
+/**
+ * Safe AsyncStorage setter that protects against Android SQLite_FULL (code 13):
+ * 1. Sanitizes posts, stories, and profiles to strip massive base64 media payloads before SQLite serialization.
+ * 2. Catches unhandled promise rejections so UI interactions never crash or throw unhandled exceptions.
+ * 3. Automatically purges oversized caches if SQLite storage is full.
+ */
+export async function safeAsyncStorageSet(key: string, rawValue: string): Promise<void> {
+  try {
+    let sanitizedValue = rawValue;
+
+    // Sanitize heavy arrays (POSTS or STORIES)
+    if (key === STORAGE_KEYS.POSTS || key === STORAGE_KEYS.STORIES) {
+      try {
+        const parsed = JSON.parse(rawValue);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.map((item: any) => {
+            if (item && item.mediaUrl && typeof item.mediaUrl === 'string') {
+              if (item.mediaUrl.startsWith('data:video/') || item.mediaUrl.length > 25000) {
+                return {
+                  ...item,
+                  mediaUrl: item.mediaType === 'video' ? '' : item.mediaUrl.slice(0, 500),
+                };
+              }
+            }
+            return item;
+          });
+          sanitizedValue = JSON.stringify(cleaned);
+        }
+      } catch (parseErr) {
+        // use rawValue if JSON parse fails
+      }
+    } else if (key === STORAGE_KEYS.ALL_USERS || key === STORAGE_KEYS.USER) {
+      try {
+        const parsed = JSON.parse(rawValue);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.map((u: any) => {
+            if (u && u.avatarUrl && typeof u.avatarUrl === 'string' && u.avatarUrl.length > 25000) {
+              return { ...u, avatarUrl: '' };
+            }
+            return u;
+          });
+          sanitizedValue = JSON.stringify(cleaned);
+        } else if (parsed && parsed.avatarUrl && typeof parsed.avatarUrl === 'string' && parsed.avatarUrl.length > 25000) {
+          sanitizedValue = JSON.stringify({ ...parsed, avatarUrl: '' });
+        }
+      } catch {}
+    }
+
+    await AsyncStorage.setItem(key, sanitizedValue);
+  } catch (err: any) {
+    console.warn(`[AsyncStorage SafeSet] Error saving key "${key}":`, err?.message || err);
+    if (err?.message?.includes('SQLITE_FULL') || err?.code === 13 || String(err).includes('SQLITE_FULL')) {
+      // Auto-recovery: SQLite is full, immediately purge heavy caches
+      try {
+        await AsyncStorage.multiRemove([STORAGE_KEYS.POSTS, STORAGE_KEYS.STORIES, STORAGE_KEYS.ALL_USERS]);
+        console.log('[AsyncStorage SafeSet] Cleared heavy caches to recover from SQLITE_FULL');
+      } catch {}
+    }
+  }
+}
+
 export function generateUUID(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -471,10 +532,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           AsyncStorage.getItem(STORAGE_KEYS.FOLLOWING),
         ]);
 
+        // Emergency recovery from Android SQLite_FULL: purge any bloated offline post/story caches
+        if (savedPosts && (savedPosts.includes('data:video/') || savedPosts.length > 50000)) {
+          console.log('[Storage Recovery] Clearing bloated posts cache to free SQLite database space');
+          try {
+            await AsyncStorage.removeItem(STORAGE_KEYS.POSTS);
+          } catch {}
+        }
+        if (savedStories && (savedStories.includes('data:video/') || savedStories.length > 50000)) {
+          console.log('[Storage Recovery] Clearing bloated stories cache to free SQLite database space');
+          try {
+            await AsyncStorage.removeItem(STORAGE_KEYS.STORIES);
+          } catch {}
+        }
+
         let deviceUserId = await AsyncStorage.getItem('@afford_device_user_id');
         if (!deviceUserId || !isValidUUID(deviceUserId)) {
           deviceUserId = generateUUID();
-          await AsyncStorage.setItem('@afford_device_user_id', deviceUserId);
+          await safeAsyncStorageSet('@afford_device_user_id', deviceUserId);
         }
 
         let currentUserObj: UserProfile;
@@ -483,15 +558,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             currentUserObj = JSON.parse(savedUser);
             if (!currentUserObj.id || currentUserObj.id === 'usr_me_01' || !isValidUUID(currentUserObj.id)) {
               currentUserObj = { ...currentUserObj, id: deviceUserId };
-              await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
+              await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
             }
           } catch {
             currentUserObj = { ...CURRENT_USER, id: deviceUserId };
-            await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
+            await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
           }
         } else {
           currentUserObj = { ...CURRENT_USER, id: deviceUserId };
-          await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
+          await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
         }
 
         setUser(currentUserObj);
@@ -504,7 +579,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               currentUserObj.avatarUrl = portableAvatar;
               setUser({ ...currentUserObj });
               userRef.current = currentUserObj;
-              AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
+              safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
               broadcastUserUpdate(currentUserObj);
             }
           });
@@ -526,7 +601,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     currentMedia = portableMedia;
                     setPosts((prev) => {
                       const next = prev.map((item) => (item.id === p.id ? { ...item, mediaUrl: portableMedia } : item));
-                      AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(next));
+                      safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
                       return next;
                     });
                   }
@@ -688,7 +763,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Database profiles overwrite or insert
           mappedUsers.forEach((u) => map.set(u.id, u));
           const merged = Array.from(map.values());
-          AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(merged));
+          safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(merged));
           return merged;
         });
       }
@@ -755,7 +830,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               prev.forEach((u) => allMap.set(u.id, u));
               mappedDb.forEach((u) => allMap.set(u.id, u));
               const merged = Array.from(allMap.values());
-              AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(merged));
+              safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(merged));
               return merged;
             });
 
@@ -780,7 +855,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       prev.forEach((u) => map.set(u.id, u));
       map.set(targetUser.id, { ...(map.get(targetUser.id) || {}), ...targetUser });
       const next = Array.from(map.values());
-      AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+      safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
       return next;
     });
 
@@ -837,7 +912,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return c;
       });
       if (changed) {
-        AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(next));
+        safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(next));
         return next;
       }
       return prev;
@@ -959,7 +1034,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         updated = [newIncomingConv, ...prev];
       }
-      AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
       return updated;
     });
 
@@ -970,7 +1045,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...curr,
         missYouReceivedCount: (curr.missYouReceivedCount || 0) + 1,
       };
-      AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(next));
+      safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(next));
       return next;
     });
 
@@ -994,7 +1069,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: 'Just now',
       };
       const updated = [newNotif, ...prev];
-      AsyncStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(updated));
       return updated;
     });
   }, [allUsers]);
@@ -1026,7 +1101,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               } else {
                 next = [parsed.user, ...prev];
               }
-              AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+              safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
               return next;
             });
           }
@@ -1043,7 +1118,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   ...curr,
                   followersCount: Math.max(0, (curr.followersCount || 0) + (parsed.delta || 1)),
                 };
-                AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(next));
+                safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(next));
                 return next;
               });
             }
@@ -1057,7 +1132,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
                 return u;
               });
-              AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+              safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
               return next;
             });
           }
@@ -1082,7 +1157,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setPosts((prev) => {
               if (prev.some((p) => p.id === payload.post.id)) return prev;
               const next = [payload.post, ...prev];
-              AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(next));
+              safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
               return next;
             });
           }
@@ -1103,7 +1178,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ...prev,
                 [payload.conversationId]: [...convMsgs, payload.message],
               };
-              AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
+              safeAsyncStorageSet(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
               return updated;
             });
 
@@ -1158,7 +1233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 };
                 updated = [newIncomingConv, ...prev];
               }
-              AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+              safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
               return updated;
             });
           }
@@ -1210,7 +1285,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
           if (hasNew) {
-            AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(next));
+            safeAsyncStorageSet(STORAGE_KEYS.MESSAGES, JSON.stringify(next));
             return next;
           }
           return prev;
@@ -1261,7 +1336,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (changed) {
             const updated = Array.from(map.values());
-            AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+            safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
             return updated;
           }
           return prev;
@@ -1352,7 +1427,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const next = Array.from(map.values()).sort(
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           );
-          AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(next));
+          safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
           return next;
         });
       }
@@ -1417,7 +1492,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const next = Array.from(map.values()).sort(
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           );
-          AsyncStorage.setItem(STORAGE_KEYS.STORIES, JSON.stringify(next));
+          safeAsyncStorageSet(STORAGE_KEYS.STORIES, JSON.stringify(next));
           return next;
         });
       }
@@ -1461,7 +1536,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } else {
               next = [payload.user, ...prev];
             }
-            AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+            safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
             return next;
           });
         } else if (payload?.type === 'USER_FOLLOW_TOGGLED') {
@@ -1473,7 +1548,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ...curr,
                 followersCount: Math.max(0, (curr.followersCount || 0) + (payload.delta || 1)),
               };
-              AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(next));
+              safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(next));
               return next;
             });
           }
@@ -1487,7 +1562,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
               return u;
             });
-            AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+            safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
             return next;
           });
         } else if (payload?.type === 'USER_HEARTBEAT' && payload.userId) {
@@ -1501,7 +1576,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setPosts((prev) => {
             if (prev.some((p) => p.id === payload.post.id)) return prev;
             const next = [payload.post, ...prev];
-            AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(next));
+            safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
             return next;
           });
         } else if (payload?.type === 'NEW_MESSAGE' && payload.conversationId && payload.message) {
@@ -1569,7 +1644,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
               updated = [newIncomingConv, ...prev];
             }
-            AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+            safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
             return updated;
           });
         }
@@ -1648,7 +1723,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             createdAt: profile.created_at,
           };
           setUser(loadedUser);
-          AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(loadedUser));
+          safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(loadedUser));
           broadcastUserUpdate(loadedUser);
           fetchAllProfiles();
         }
@@ -1733,7 +1808,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               } else {
                 next = [mappedUser, ...prev];
               }
-              AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+              safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
               return next;
             });
           }
@@ -1791,7 +1866,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   }
                   return c;
                 });
-                AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+                safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
                 return updated;
               } else {
                 const senderProfile = allUsers.find((u) => u.id === newMsg.sender_id);
@@ -1823,7 +1898,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   lastSeenText: 'Active now',
                 };
                 const updated = [newConv, ...prev];
-                AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+                safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
                 return updated;
               }
             });
@@ -1873,7 +1948,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             prev.forEach((u) => map.set(u.id, u));
             map.set(target.id, { ...(map.get(target.id) || {}), ...target });
             const merged = Array.from(map.values());
-            AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(merged));
+            safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(merged));
             return merged;
           });
         }
@@ -1902,7 +1977,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setPosts((prev) => {
             if (prev.some((post) => post.id === p.id)) return prev;
             const next = [p, ...prev];
-            AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(next));
+            safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(next));
             return next;
           });
         }
@@ -1913,7 +1988,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setStories((prev) => {
             if (prev.some((story) => story.id === s.id)) return prev;
             const next = [s, ...prev];
-            AsyncStorage.setItem(STORAGE_KEYS.STORIES, JSON.stringify(next));
+            safeAsyncStorageSet(STORAGE_KEYS.STORIES, JSON.stringify(next));
             return next;
           });
         }
@@ -1940,7 +2015,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const merged = Array.from(map.values()).sort(
               (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             );
-            AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(merged));
+            safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(merged));
             return merged;
           });
         }
@@ -1957,7 +2032,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ...curr,
               followersCount: Math.max(0, (curr.followersCount || 0) + (data.delta || 1)),
             };
-            AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(next));
+            safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(next));
             return next;
           });
         }
@@ -1972,7 +2047,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             return u;
           });
-          AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+          safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
           return next;
         });
       })
@@ -1991,7 +2066,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ...prev,
             [data.conversationId]: [...convMsgs, data.message],
           };
-          AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
+          safeAsyncStorageSet(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
           return updated;
         });
 
@@ -2046,7 +2121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             };
             updated = [newIncomingConv, ...prev];
           }
-          AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+          safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
           return updated;
         });
       })
@@ -2118,7 +2193,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setUser(demoUser);
     userRef.current = demoUser;
-    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(demoUser));
+    await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(demoUser));
     broadcastUserUpdate(demoUser);
     return { success: true };
   };
@@ -2165,7 +2240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         setUser(newUserProfile);
         userRef.current = newUserProfile;
-        await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(newUserProfile));
+        await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(newUserProfile));
         broadcastUserUpdate(newUserProfile);
         await fetchAllProfiles();
       }
@@ -2182,7 +2257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setUser(newUser);
     userRef.current = newUser;
-    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(newUser));
+    await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(newUser));
     broadcastUserUpdate(newUser);
     return { success: true };
   };
@@ -2209,7 +2284,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = { ...user, ...updates, username: resolvedUsername, id: validId };
     setUser(updated);
     userRef.current = updated;
-    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updated));
+    await safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(updated));
 
     // Synchronize into allUsers immediately for live user lists throughout the app
     setAllUsers((prev) => {
@@ -2217,7 +2292,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       prev.forEach((u) => map.set(u.id, u));
       map.set(updated.id, updated);
       const next = Array.from(map.values());
-      AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+      safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
       return next;
     });
 
@@ -2295,7 +2370,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             return c;
           });
-          AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+          safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
           return updated;
         });
       }
@@ -2317,7 +2392,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setConversations((prev) => {
       const updated = [newConv, ...prev.filter((c) => c.id !== directId && c.otherUser?.id !== targetUser.id)];
-      AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
       return updated;
     });
 
@@ -2337,7 +2412,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return p;
       });
-      AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(updated));
       return updated;
     });
   };
@@ -2354,7 +2429,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return p;
       });
-      AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(updated));
       return updated;
     });
   };
@@ -2395,7 +2470,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setPosts((prev) => {
       const updated = [newPost, ...prev];
-      AsyncStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.POSTS, JSON.stringify(updated));
       return updated;
     });
 
@@ -2489,7 +2564,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setStories((prev) => {
       const updated = [newStory, ...prev];
-      AsyncStorage.setItem(STORAGE_KEYS.STORIES, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.STORIES, JSON.stringify(updated));
       return updated;
     });
 
@@ -2573,7 +2648,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...prev,
         [conversationId]: [...convMsgs, newMsg],
       };
-      AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
       return updated;
     });
 
@@ -2591,7 +2666,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return c;
       });
-      AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
       return updated;
     });
 
@@ -2764,7 +2839,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         newCount = 1;
         updated = [newConv, ...prev];
       }
-      AsyncStorage.setItem(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.CONVERSATIONS, JSON.stringify(updated));
       return updated;
     });
 
@@ -2776,7 +2851,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         missYouSentCount: (u.missYouSentCount || 0) + 1,
         dailyMissYouSentCount: (u.dailyMissYouSentCount || 0) + 1,
       };
-      AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+      safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
       return updatedUser;
     });
 
@@ -2807,7 +2882,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     setMissYouHistory((prev) => {
       const updated = [newHistoryItem, ...prev];
-      AsyncStorage.setItem(STORAGE_KEYS.MISS_YOU_HISTORY, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.MISS_YOU_HISTORY, JSON.stringify(updated));
       return updated;
     });
 
@@ -2940,7 +3015,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       setMissYouHistory(mapped);
-      AsyncStorage.setItem(STORAGE_KEYS.MISS_YOU_HISTORY, JSON.stringify(mapped));
+      safeAsyncStorageSet(STORAGE_KEYS.MISS_YOU_HISTORY, JSON.stringify(mapped));
       return mapped;
     } catch (err) {
       console.warn('Failed to fetch miss you history from Supabase:', err);
@@ -2966,7 +3041,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return q;
       });
-      AsyncStorage.setItem(STORAGE_KEYS.CONNECTION_QUESTIONS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.CONNECTION_QUESTIONS, JSON.stringify(updated));
       return updated;
     });
 
@@ -3011,7 +3086,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : [...followingIds, targetUserId];
 
     setFollowingIds(nextFollowingIds);
-    AsyncStorage.setItem(STORAGE_KEYS.FOLLOWING, JSON.stringify(nextFollowingIds));
+    safeAsyncStorageSet(STORAGE_KEYS.FOLLOWING, JSON.stringify(nextFollowingIds));
 
     // 1. Update current user's following count
     if (user) {
@@ -3021,7 +3096,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
       setUser(updatedUser);
       userRef.current = updatedUser;
-      AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
+      safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(updatedUser));
       broadcastUserUpdate(updatedUser);
     }
 
@@ -3034,7 +3109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return u;
       });
-      AsyncStorage.setItem(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
+      safeAsyncStorageSet(STORAGE_KEYS.ALL_USERS, JSON.stringify(next));
       return next;
     });
 
@@ -3122,13 +3197,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       friendsResponsesCount: dailyPrompt.friendsResponsesCount + 1,
     };
     setDailyPrompt(updated);
-    AsyncStorage.setItem(STORAGE_KEYS.PROMPT, JSON.stringify(updated));
+    safeAsyncStorageSet(STORAGE_KEYS.PROMPT, JSON.stringify(updated));
   };
 
   const markNotificationsRead = () => {
     setNotifications((prev) => {
       const updated = prev.map((n) => ({ ...n, isRead: true }));
-      AsyncStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(updated));
+      safeAsyncStorageSet(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(updated));
       return updated;
     });
   };
