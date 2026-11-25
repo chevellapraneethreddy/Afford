@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    paddingBottom: 32,
+    paddingBottom: 110,
   },
   greetingSection: {
     flexDirection: 'row',

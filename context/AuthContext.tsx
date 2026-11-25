@@ -1390,15 +1390,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 return;
               }
             }
-            const author = profileMap.get(p.user_id) || allUsers.find((u) => u.id === p.user_id) || {
-              id: p.user_id,
-              username: 'member',
-              displayName: 'Afford Member',
-              avatarUrl: '',
-              isVerified: false,
-            };
+            const isMe = !!userRef.current && (p.user_id === userRef.current.id || (userRef.current.username && profileMap.get(p.user_id)?.username === userRef.current.username));
+            const author = isMe
+              ? userRef.current
+              : (profileMap.get(p.user_id) || allUsers.find((u) => u.id === p.user_id) || {
+                  id: p.user_id,
+                  username: 'praneeth',
+                  displayName: 'Praneeth',
+                  avatarUrl: '',
+                  isVerified: false,
+                });
 
-            const safeAuthorAvatar = author.avatar_url || author.avatarUrl || '';
+            const safeAuthorAvatar = (isMe && userRef.current?.avatarUrl) ? userRef.current.avatarUrl : (author.avatar_url || author.avatarUrl || '');
             const finalAvatar = safeAuthorAvatar && !safeAuthorAvatar.includes('534528741775') ? safeAuthorAvatar : '';
 
             map.set(p.id, {
@@ -1406,8 +1409,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               userId: p.user_id,
               user: {
                 id: p.user_id,
-                username: author.username || 'member',
-                displayName: author.display_name || author.displayName || 'Afford Member',
+                username: isMe ? (userRef.current?.username || 'praneeth') : (author.username || 'praneeth'),
+                displayName: isMe ? (userRef.current?.displayName || 'Praneeth') : (author.display_name || author.displayName || 'Praneeth'),
                 avatarUrl: finalAvatar,
                 isVerified: author.is_verified ?? author.isVerified ?? false,
               },
@@ -1469,21 +1472,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 return;
               }
             }
-            const author = profileMap.get(s.user_id) || allUsers.find((u) => u.id === s.user_id) || {
-              id: s.user_id,
-              username: 'member',
-              displayName: 'Afford Member',
-              avatarUrl: '',
-            };
-            const safeAuthorAvatar = author.avatar_url || author.avatarUrl || '';
+            const isMe = !!userRef.current && (s.user_id === userRef.current.id || (userRef.current.username && profileMap.get(s.user_id)?.username === userRef.current.username));
+            const author = isMe
+              ? userRef.current
+              : (profileMap.get(s.user_id) || allUsers.find((u) => u.id === s.user_id) || {
+                  id: s.user_id,
+                  username: 'praneeth',
+                  displayName: 'Praneeth',
+                  avatarUrl: '',
+                });
+            const safeAuthorAvatar = (isMe && userRef.current?.avatarUrl) ? userRef.current.avatarUrl : (author.avatar_url || author.avatarUrl || '');
             const finalAvatar = safeAuthorAvatar && !safeAuthorAvatar.includes('534528741775') ? safeAuthorAvatar : '';
             map.set(s.id, {
               id: s.id,
               userId: s.user_id,
               user: {
                 id: s.user_id,
-                username: author.username || 'member',
-                displayName: author.display_name || author.displayName || 'Afford Member',
+                username: isMe ? (userRef.current?.username || 'praneeth') : (author.username || 'praneeth'),
+                displayName: isMe ? (userRef.current?.displayName || 'Praneeth') : (author.display_name || author.displayName || 'Praneeth'),
                 avatarUrl: finalAvatar,
               },
               mediaUrl: s.media_url,
@@ -1738,45 +1744,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    // Fetch initial live posts from Supabase
-    supabase
-      .from('posts')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .then(({ data: dbPosts, error }) => {
-        if (!error && dbPosts && dbPosts.length > 0) {
-          const validDbPosts = dbPosts.filter((p: any) => {
-            if (!p.media_url || p.media_url.includes('RmlsZSBub3QgZm91bmQ=')) return false;
-            if (p.media_url.startsWith('file:') || p.media_url.startsWith('content:')) {
-              if (Platform.OS === 'web' || (userRef.current && p.user_id !== userRef.current.id)) {
-                return false;
-              }
-            }
-            return true;
-          });
-          const livePosts: Post[] = validDbPosts.map((p: any) => ({
-            id: p.id,
-            userId: p.user_id,
-            user: {
-              id: p.user_id,
-              username: 'member',
-              displayName: 'Afford Member',
-              avatarUrl: '',
-            },
-            mediaUrl: p.media_url,
-            mediaType: p.media_type || 'image',
-            caption: p.caption || '',
-            filterName: p.filter_name || 'Original',
-            isCloseFriendsOnly: p.is_close_friends_only || false,
-            likesCount: p.likes_count || 0,
-            commentsCount: p.comments_count || 0,
-            sharesCount: p.shares_count || 0,
-            isLikedByMe: false,
-            createdAt: p.created_at,
-          }));
-          setPosts(livePosts);
-        }
-      });
+    // Fetch initial live posts from Supabase using joined profile metadata
+    fetchPosts();
 
     // Synchronize user profiles
     fetchAllProfiles();
@@ -2451,16 +2420,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ) => {
     if (!user) return;
     const mediaUrl = await uploadMediaToSupabase(rawMediaUrl, mediaType);
-    const authorUsername = user.username && user.username !== 'alex_rivera'
+    const authorUsername = user.username && user.username !== 'alex_rivera' && user.username !== 'member'
       ? user.username
-      : (user.displayName ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : 'member');
+      : (user.displayName && user.displayName !== 'Afford Member' ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : 'praneeth');
+    const authorDisplayName = user.displayName && user.displayName !== 'Afford Member' ? user.displayName : 'Praneeth';
     const newPost: Post = {
       id: `post_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       userId: user.id,
       user: {
         id: user.id,
         username: authorUsername,
-        displayName: user.displayName,
+        displayName: authorDisplayName,
         avatarUrl: user.avatarUrl,
         isVerified: user.isVerified,
       },
@@ -2546,9 +2516,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return;
     const mediaUrl = await uploadMediaToSupabase(rawMediaUrl, mediaType);
     const validUserId = isValidUUID(user.id) ? user.id : toValidUUID(user.id);
-    const authorUsername = user.username && user.username !== 'alex_rivera'
+    const authorUsername = user.username && user.username !== 'alex_rivera' && user.username !== 'member'
       ? user.username
-      : (user.displayName ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : 'member');
+      : (user.displayName && user.displayName !== 'Afford Member' ? user.displayName.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 20) : 'praneeth');
+    const authorDisplayName = user.displayName && user.displayName !== 'Afford Member' ? user.displayName : 'Praneeth';
 
     const newStory: Story = {
       id: `story_${Date.now()}_${Math.random().toString(36).substring(7)}`,
@@ -2556,7 +2527,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user: {
         id: validUserId,
         username: authorUsername,
-        displayName: user.displayName,
+        displayName: authorDisplayName,
         avatarUrl: user.avatarUrl,
       },
       mediaUrl,

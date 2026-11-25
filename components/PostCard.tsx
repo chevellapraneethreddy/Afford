@@ -35,17 +35,17 @@ const NativePostVideo: React.FC<{ uri: string }> = ({ uri }) => {
     p.play();
   });
 
-  React.useEffect(() => {
-    if (player) {
-      player.muted = isMuted;
-    }
-  }, [player, isMuted]);
-
   const toggleMute = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e) {}
-    setIsMuted((prev) => !prev);
+    } catch {}
+    setIsMuted((prev) => {
+      const next = !prev;
+      if (player) {
+        player.muted = next;
+      }
+      return next;
+    });
   };
 
   return (
@@ -54,7 +54,7 @@ const NativePostVideo: React.FC<{ uri: string }> = ({ uri }) => {
         player={player}
         style={StyleSheet.absoluteFill}
         contentFit="cover"
-        nativeControls={true}
+        nativeControls={false}
       />
       <TouchableOpacity
         onPress={toggleMute}
@@ -115,10 +115,12 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) {}
 
-    likeBtnScale.value = withSequence(
-      withSpring(1.35),
-      withSpring(1.0)
-    );
+    try {
+      likeBtnScale.value = withSequence(
+        withSpring(1.35),
+        withSpring(1.0)
+      );
+    } catch (e) {}
     toggleLikePost(post.id);
   };
 
@@ -156,7 +158,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post }) => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e) {}
-    setIsSaved(!isSaved);
+    setIsSaved((prev) => !prev);
   };
 
   const animatedHeartStyle = useAnimatedStyle(() => {

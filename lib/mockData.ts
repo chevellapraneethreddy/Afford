@@ -14,10 +14,10 @@ import {
 
 export const CURRENT_USER: UserProfile = {
   id: 'usr_me_01',
-  username: 'alex_rivera',
-  displayName: 'Alex Rivera',
-  avatarUrl: '',
-  bio: 'Capturing quiet moments & meaningful connections. Film photographer & wanderer.',
+  username: 'praneeth',
+  displayName: 'Praneeth',
+  avatarUrl: 'https://aqmntovbkteirfzkqvtc.supabase.co/storage/v1/object/public/afford-media/uploads/avatar_cd39eae8-6a7e-4b19-818f-7d2ff1532128.jpg',
+  bio: 'Capturing quiet moments & meaningful connections. ✨ Film photographer & wanderer.',
   isPrivate: false,
   missYouNotificationsEnabled: true,
   streakNotificationsEnabled: true,
