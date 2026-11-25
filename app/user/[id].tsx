@@ -190,9 +190,7 @@ export default function UserProfileScreen() {
     (profile.username && followingIds.includes(profile.username)) ||
     (id && followingIds.includes(id));
 
-  useEffect(() => {
-    setAvatarError(false);
-  }, [profile.avatarUrl]);
+  const [avatarError, setAvatarError] = useState(false);
 
   // Directly fetch moments / posts for this profile from Supabase
   const [fetchedPosts, setFetchedPosts] = useState<Post[]>([]);
@@ -239,26 +237,46 @@ export default function UserProfileScreen() {
   const userPosts: Post[] = useMemo(() => {
     const map = new Map<string, Post>();
     posts
-      .filter(
-        (p) =>
+      .filter((p) => {
+        if (!p.mediaUrl || p.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') || p.mediaUrl.includes('File not found')) {
+          return false;
+        }
+        if (p.mediaUrl.startsWith('file:') || p.mediaUrl.startsWith('content:')) {
+          if (Platform.OS === 'web' || !isMe) {
+            return false;
+          }
+        }
+        return (
           p.userId === profile.id ||
           p.user?.id === profile.id ||
           (profile.username && p.user?.username?.toLowerCase() === profile.username.toLowerCase()) ||
           (profile.displayName && p.user?.displayName?.toLowerCase() === profile.displayName.toLowerCase())
-      )
+        );
+      })
       .forEach((p) => map.set(p.id, p));
 
-    fetchedPosts.forEach((p) => {
-      if (!map.has(p.id)) map.set(p.id, p);
-    });
+    fetchedPosts
+      .filter((p) => {
+        if (!p.mediaUrl || p.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') || p.mediaUrl.includes('File not found')) {
+          return false;
+        }
+        if (p.mediaUrl.startsWith('file:') || p.mediaUrl.startsWith('content:')) {
+          if (Platform.OS === 'web' || !isMe) {
+            return false;
+          }
+        }
+        return true;
+      })
+      .forEach((p) => {
+        if (!map.has(p.id)) map.set(p.id, p);
+      });
 
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [posts, profile.id, profile.username, profile.displayName, fetchedPosts]);
+  }, [posts, profile.id, profile.username, profile.displayName, fetchedPosts, isMe]);
 
   // Safe avatar URL handling - avoid broken blob or file URLs from other tabs/browsers
-  const [avatarError, setAvatarError] = useState(false);
   const displayAvatarUrl = useMemo(() => {
     if (avatarError || !profile.avatarUrl) {
       return null;

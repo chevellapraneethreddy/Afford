@@ -96,6 +96,10 @@ export const StoryCarousel: React.FC = () => {
   };
 
   const handleAddStoryOptions = () => {
+    if (Platform.OS === 'web') {
+      router.push({ pathname: '/(tabs)/create', params: { mode: 'story' } });
+      return;
+    }
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -180,10 +184,10 @@ export const StoryCarousel: React.FC = () => {
               </View>
             </LinearGradient>
 
-            {/* Plus badge to add another story directly from gallery */}
+            {/* Plus badge to add another story directly */}
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={handlePickFromGallery}
+              onPress={() => router.push({ pathname: '/(tabs)/create', params: { mode: 'story' } })}
               style={[styles.addBadge, { borderColor: colors.background }]}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               accessibilityLabel="Add new story"

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   FlatList,
+  Platform,
   RefreshControl,
   StyleSheet,
   Text,
@@ -71,6 +72,14 @@ export default function HomeScreen() {
   };
 
   const filteredPosts = posts.filter((p) => {
+    if (!p.mediaUrl || p.mediaUrl.includes('RmlsZSBub3QgZm91bmQ=') || p.mediaUrl.includes('File not found')) {
+      return false;
+    }
+    if (p.mediaUrl.startsWith('file:') || p.mediaUrl.startsWith('content:')) {
+      if (Platform.OS === 'web' || (user && p.userId !== user.id)) {
+        return false;
+      }
+    }
     if (activeFilter === 'close_circle') return p.isCloseFriendsOnly;
     if (activeFilter === 'favorites') return p.isLikedByMe;
     return true;

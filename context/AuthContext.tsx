@@ -317,11 +317,34 @@ export async function normalizeImageUri(uri: string, maxDim: number = 800, quali
 }
 
 /**
+ * Convert base64 string to Uint8Array safely in any JS environment (Web, Hermes, Node)
+ */
+function base64ToUint8Array(base64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const cleanBase64 = base64.replace(/[^A-Za-z0-9+/]/g, '');
+  const len = cleanBase64.length;
+  const byteLength = (len * 3) >> 2;
+  const bytes = new Uint8Array(byteLength);
+  let p = 0;
+  for (let i = 0; i < len; i += 4) {
+    const enc1 = chars.indexOf(cleanBase64[i]);
+    const enc2 = chars.indexOf(cleanBase64[i + 1]);
+    const enc3 = chars.indexOf(cleanBase64[i + 2]);
+    const enc4 = chars.indexOf(cleanBase64[i + 3]);
+    bytes[p++] = (enc1 << 2) | (enc2 >> 4);
+    if (enc3 !== 64 && enc3 !== -1) bytes[p++] = ((enc2 & 15) << 4) | (enc3 >> 2);
+    if (enc4 !== 64 && enc4 !== -1) bytes[p++] = ((enc3 & 3) << 6) | enc4;
+  }
+  return bytes.subarray(0, p);
+}
+
+/**
  * Robust Supabase media uploader:
  * 1. Checks if already remote HTTP/HTTPS CDN URL.
- * 2. Uploads native files (images, MP4 videos) to Supabase Storage 'afford-media' bucket using FormData.
- * 3. Returns public CDN URL that streams seamlessly on all phones & web browsers.
- * 4. Never writes "File not found" or corrupt data to Supabase.
+ * 2. Uploads native files (images, MP4 videos) to Supabase Storage 'afford-media' bucket using FileSystem.uploadAsync.
+ * 3. Streams data URLs or web blobs directly into Supabase Storage CDN.
+ * 4. Returns public CDN URL that streams seamlessly on all phones & web browsers.
+ * 5. Never writes "File not found" or corrupt data to Supabase.
  */
 export async function uploadMediaToSupabase(
   uri: string,
@@ -340,50 +363,72 @@ export async function uploadMediaToSupabase(
   const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
   const filePath = `uploads/${fileName}`;
 
-  // 1. Try uploading to Supabase Storage bucket 'afford-media'
-  try {
-    const formData = new FormData();
-    if (uri.startsWith('data:')) {
-      const parts = uri.split(',');
-      const byteString = atob(parts[1]);
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-      }
-      const blob = new Blob([ab], { type: mimeType });
-      formData.append('file', blob, fileName);
-    } else {
-      // React Native FormData natively handles { uri, name, type }
-      formData.append('file', {
+  // 1. Native Mobile (Android & iOS): Stream directly from local filesystem to Supabase Storage CDN
+  if (Platform.OS !== 'web' && (uri.startsWith('file:') || uri.startsWith('content:'))) {
+    try {
+      const uploadResult = await FileSystem.uploadAsync(
+        `${supabaseUrl}/storage/v1/object/afford-media/${filePath}`,
         uri,
-        name: fileName,
-        type: mimeType,
-      } as any);
+        {
+          httpMethod: 'POST',
+          uploadType: ((FileSystem as any).FileSystemUploadType?.BINARY_CONTENT ?? 0) as any,
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': mimeType,
+          },
+        }
+      );
+
+      if (uploadResult.status >= 200 && uploadResult.status < 300) {
+        const publicUrl = `${supabaseUrl}/storage/v1/object/public/afford-media/${filePath}`;
+        console.log('[Native Upload Success] Uploaded to Supabase CDN:', publicUrl);
+        return publicUrl;
+      } else {
+        console.warn('[Native Upload Error] Supabase returned status:', uploadResult.status, uploadResult.body);
+      }
+    } catch (nativeErr) {
+      console.warn('[Native Upload Error] FileSystem.uploadAsync failed:', nativeErr);
+    }
+  }
+
+  // 2. Data URLs or Web Blobs: Upload raw binary to Supabase Storage CDN
+  try {
+    let body: any = null;
+    if (uri.startsWith('data:')) {
+      const commaIdx = uri.indexOf(',');
+      const rawBase64 = commaIdx >= 0 ? uri.slice(commaIdx + 1) : uri;
+      body = base64ToUint8Array(rawBase64);
+    } else if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+      const blobRes = await fetch(uri);
+      body = await blobRes.blob();
     }
 
-    const uploadRes = await fetch(
-      `${supabaseUrl}/storage/v1/object/afford-media/${filePath}`,
-      {
-        method: 'POST',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-        },
-        body: formData,
-      }
-    );
+    if (body) {
+      const uploadRes = await fetch(
+        `${supabaseUrl}/storage/v1/object/afford-media/${filePath}`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': mimeType,
+          },
+          body: body,
+        }
+      );
 
-    if (uploadRes.ok) {
-      const publicUrl = `${supabaseUrl}/storage/v1/object/public/afford-media/${filePath}`;
-      console.log('Uploaded to Supabase Storage CDN:', publicUrl);
-      return publicUrl;
+      if (uploadRes.ok) {
+        const publicUrl = `${supabaseUrl}/storage/v1/object/public/afford-media/${filePath}`;
+        console.log('[Storage Upload Success] Uploaded to Supabase CDN:', publicUrl);
+        return publicUrl;
+      }
     }
   } catch (storageErr) {
     console.warn('Supabase storage upload attempt note:', storageErr);
   }
 
-  // 2. Safe fallback for images: data URL
+  // 3. Fallback for images only: compressed JPEG data URL
   if (mediaType === 'image') {
     if (uri.startsWith('data:image/')) {
       return uri;
@@ -394,56 +439,8 @@ export async function uploadMediaToSupabase(
     }
   }
 
-  // 3. Safe fallback for videos: portable base64 data URL so videos stream seamlessly on any other device/web
-  if (mediaType === 'video') {
-    if (uri.startsWith('data:video/')) {
-      return uri;
-    }
-    // Web: convert blob to data URL
-    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-      try {
-        const res = await fetch(uri);
-        const blob = await res.blob();
-        const dataUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-          reader.onerror = () => resolve('');
-          reader.readAsDataURL(blob);
-        });
-        if (dataUrl && !dataUrl.includes('RmlsZSBub3QgZm91bmQ=')) {
-          return dataUrl;
-        }
-      } catch (blobErr) {
-        console.warn('Web video blob conversion error:', blobErr);
-      }
-    }
-    // Native mobile (Android / iOS): convert local device file to base64 data URL
-    if (Platform.OS !== 'web' && (uri.startsWith('file:') || uri.startsWith('content:'))) {
-      try {
-        const base64 = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        if (base64) {
-          return `data:${mimeType};base64,${base64}`;
-        }
-      } catch (fsErr) {
-        console.warn('Native video FileSystem readAsStringAsync error:', fsErr);
-      }
-    }
-  }
-
-  // Final absolute safeguard: NEVER return a raw device file:/// or content:// URI to Supabase
+  // Final absolute safeguard: NEVER return a local device file:/// or content:// URI to Supabase
   if (uri.startsWith('file:') || uri.startsWith('content:')) {
-    if (Platform.OS !== 'web') {
-      try {
-        const base64 = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        if (base64) {
-          return `data:${mimeType};base64,${base64}`;
-        }
-      } catch (e) {}
-    }
     return '';
   }
 
@@ -572,15 +569,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(currentUserObj);
         userRef.current = currentUserObj;
 
-        // Auto-heal local avatar file paths to portable data URLs so other peers receive the actual photo
-        if (currentUserObj.avatarUrl && (currentUserObj.avatarUrl.startsWith('file:') || currentUserObj.avatarUrl.startsWith('content:'))) {
-          normalizeImageUri(currentUserObj.avatarUrl, 250, 0.45).then((portableAvatar) => {
-            if (portableAvatar && !portableAvatar.startsWith('file:')) {
-              currentUserObj.avatarUrl = portableAvatar;
+        // Auto-heal local avatar file paths directly to Supabase Storage CDN
+        if (currentUserObj.avatarUrl && (currentUserObj.avatarUrl.startsWith('file:') || currentUserObj.avatarUrl.startsWith('content:') || currentUserObj.avatarUrl.startsWith('data:image/'))) {
+          uploadMediaToSupabase(currentUserObj.avatarUrl, 'image').then((cdnAvatar) => {
+            if (cdnAvatar && cdnAvatar.startsWith('http')) {
+              currentUserObj.avatarUrl = cdnAvatar;
               setUser({ ...currentUserObj });
               userRef.current = currentUserObj;
               safeAsyncStorageSet(STORAGE_KEYS.USER, JSON.stringify(currentUserObj));
               broadcastUserUpdate(currentUserObj);
+              if (isConfigured) {
+                supabase.from('profiles').update({ avatar_url: cdnAvatar }).eq('id', currentUserObj.id).then(() => {});
+              }
             }
           });
         }
@@ -1382,11 +1382,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           prev.forEach((p) => map.set(p.id, p));
 
           dbPosts.forEach((p: any) => {
-            if (!p.media_url || p.media_url.includes('RmlsZSBub3QgZm91bmQ=')) {
+            if (!p.media_url || p.media_url.includes('RmlsZSBub3QgZm91bmQ=') || p.media_url.includes('File not found')) {
               return;
             }
             if (p.media_url.startsWith('file:') || p.media_url.startsWith('content:')) {
-              if (Platform.OS === 'web' || (userRef.current && p.user_id !== userRef.current.id)) {
+              if (Platform.OS === 'web' || !userRef.current || p.user_id !== userRef.current.id) {
                 return;
               }
             }
@@ -1461,6 +1461,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const map = new Map<string, Story>();
           prev.forEach((s) => map.set(s.id, s));
           dbStories.forEach((s: any) => {
+            if (!s.media_url || s.media_url.includes('RmlsZSBub3QgZm91bmQ=') || s.media_url.includes('File not found')) {
+              return;
+            }
+            if (s.media_url.startsWith('file:') || s.media_url.startsWith('content:')) {
+              if (Platform.OS === 'web' || !userRef.current || s.user_id !== userRef.current.id) {
+                return;
+              }
+            }
             const author = profileMap.get(s.user_id) || allUsers.find((u) => u.id === s.user_id) || {
               id: s.user_id,
               username: 'member',
